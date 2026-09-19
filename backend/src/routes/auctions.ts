@@ -5,10 +5,12 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { prisma } from "../lib/prisma";
-import { requireAuth, requireRole, optionalAuth } from "../lib/auth";
+import { requireAuth, optionalAuth } from "../lib/auth";
+import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { createNotification } from "../services/notifications";
 import { param } from "../lib/params";
+import { finalizeExpiredAuction } from "../jobs/auctionEnder";
 
 const router = Router();
 
@@ -89,6 +91,9 @@ router.get(
   "/:id",
   optionalAuth,
   asyncHandler(async (req, res) => {
+    // Close immediately if the countdown has elapsed (don't wait for the job)
+    await finalizeExpiredAuction(param(req, "id"));
+
     const auction = await prisma.auction.findUnique({
       where: { id: param(req, "id") },
       include: auctionInclude(),
@@ -111,7 +116,7 @@ router.get(
 router.post(
   "/",
   requireAuth,
-  requireRole("seller", "admin"),
+  requirePermission("listing:create"),
   upload.array("images", 5),
   asyncHandler(async (req, res) => {
     const schema = z.object({
@@ -121,7 +126,7 @@ router.post(
       startPrice: z.coerce.number().positive(),
       reservePrice: z.coerce.number().positive().optional(),
       maxPriceCap: z.coerce.number().positive().optional(),
-      durationHours: z.coerce.number().min(1).max(720).default(72),
+      durationMinutes: z.coerce.number().min(1).max(43200).default(4320),
     });
     const data = schema.parse(req.body);
     const files = (req.files as Express.Multer.File[]) || [];
@@ -133,7 +138,7 @@ router.post(
       return res.status(400).json({ error: "At least one image is required" });
     }
 
-    const endsAt = new Date(Date.now() + data.durationHours * 60 * 60 * 1000);
+    const endsAt = new Date(Date.now() + data.durationMinutes * 60 * 1000);
     const auction = await prisma.auction.create({
       data: {
         sellerId: req.user!.id,
@@ -158,7 +163,7 @@ router.post(
 router.post(
   "/:id/approve",
   requireAuth,
-  requireRole("admin"),
+  requirePermission("listing:approve"),
   asyncHandler(async (req, res) => {
     const auction = await prisma.auction.findUnique({ where: { id: param(req, "id") } });
     if (!auction) return res.status(404).json({ error: "Auction not found" });
@@ -191,7 +196,7 @@ router.post(
 router.post(
   "/:id/reject",
   requireAuth,
-  requireRole("admin"),
+  requirePermission("listing:approve"),
   asyncHandler(async (req, res) => {
     const reason = z.string().min(3).parse(req.body.reason || "Does not meet guidelines");
     const auction = await prisma.auction.findUnique({ where: { id: param(req, "id") } });

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../lib/auth";
+import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
 
@@ -9,6 +10,7 @@ const router = Router();
 router.get(
   "/",
   requireAuth,
+  requirePermission("watchlist:manage"),
   asyncHandler(async (req, res) => {
     const items = await prisma.watchlist.findMany({
       where: { userId: req.user!.id },
@@ -29,6 +31,7 @@ router.get(
 router.post(
   "/:auctionId",
   requireAuth,
+  requirePermission("watchlist:manage"),
   asyncHandler(async (req, res) => {
     const auctionId = param(req, "auctionId");
     const item = await prisma.watchlist.upsert({
@@ -48,6 +51,7 @@ router.post(
 router.delete(
   "/:auctionId",
   requireAuth,
+  requirePermission("watchlist:manage"),
   asyncHandler(async (req, res) => {
     await prisma.watchlist.deleteMany({
       where: { userId: req.user!.id, auctionId: param(req, "auctionId") },

@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma";
-import { requireAuth, requireRole } from "../lib/auth";
+import { requireAuth } from "../lib/auth";
+import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
 
 const router = Router();
 
-router.use(requireAuth, requireRole("admin"));
+router.use(requireAuth, requirePermission("admin:access"));
 
 router.get(
   "/stats",

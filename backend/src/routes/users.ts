@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth } from "../lib/auth";
+import { requireAuth, signToken } from "../lib/auth";
+import { hasPermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 
 const router = Router();
@@ -17,6 +18,26 @@ router.patch(
       role: z.enum(["buyer", "seller"]).optional(),
     });
     const data = schema.parse(req.body);
+
+    const current = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { role: true },
+    });
+    if (!current) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (data.role !== undefined) {
+      if (current.role === "admin") {
+        return res
+          .status(403)
+          .json({ error: "Admin role cannot be changed from account settings" });
+      }
+      if (!hasPermission(current.role, "account:switch_role")) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+    }
+
     const user = await prisma.user.update({
       where: { id: req.user!.id },
       data,
@@ -28,8 +49,26 @@ router.patch(
         phone: true,
         address: true,
         ratingAvg: true,
+        verified: true,
       },
     });
+
+    const roleChanged = data.role !== undefined && data.role !== current.role;
+    if (roleChanged) {
+      const token = signToken({
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.name,
+      });
+      res.cookie("token", token, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: process.env.NODE_ENV === "production",
+      });
+      return res.json({ user, token });
+    }
+
     res.json({ user });
   })
 );
@@ -42,7 +81,10 @@ router.get(
       where: { bidderId: req.user!.id },
       include: {
         auction: {
-          include: { category: true, seller: { select: { id: true, name: true } } },
+          include: {
+            category: true,
+            seller: { select: { id: true, name: true } },
+          },
         },
       },
       orderBy: { createdAt: "desc" },

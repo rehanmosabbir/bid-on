@@ -1,17 +1,15 @@
 import { Navbar } from "@/components/Navbar";
-import { AuthProvider } from "@/lib/auth";
-import { Fraunces, DM_Sans } from "next/font/google";
+import { Providers } from "@/components/Providers";
+import { Newsreader, Geist } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
 
-const display = Fraunces({
+const display = Newsreader({
   subsets: ["latin"],
   variable: "--font-display",
 });
 
-const sans = DM_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-});
+const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata = {
   title: "Bid On — Online Auction",
@@ -24,18 +22,42 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={`${display.variable} ${sans.variable} antialiased`}>
-        <AuthProvider>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={cn("font-sans", geist.variable)}
+    >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('bidon-theme');var dark=t==='dark'||(t!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',dark);document.documentElement.setAttribute('data-theme',dark?'dark':'light');}catch(e){}})();`,
+          }}
+        />
+      </head>
+      <body
+        className={`${display.variable} ${geist.variable} antialiased`}
+        suppressHydrationWarning
+      >
+        <Providers>
           <Navbar />
-          <main>{children}</main>
-          <footer className="mt-24 border-t border-[var(--line)]">
-            <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-10 text-sm text-[var(--muted)] sm:flex-row sm:justify-between">
-              <p>© {new Date().getFullYear()} Bid On · e-Auction Management</p>
-              <p>BDT · Secure bidding · Admin-approved listings</p>
+          <main className="relative z-10">{children}</main>
+          <footer className="site-footer relative z-10 mt-28 border-t border-border">
+            <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-14 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="font-[family-name:var(--font-display)] text-3xl text-[var(--nav-fg)]">
+                  Bid On
+                </p>
+                <p className="mt-2 max-w-sm text-sm leading-relaxed opacity-80">
+                  Curated live auctions with verified listings and real-time
+                  bidding across Bangladesh & Asia.
+                </p>
+              </div>
+              <p className="text-xs uppercase tracking-[0.22em] opacity-60">
+                BDT · Secure · Admin-approved
+              </p>
             </div>
           </footer>
-        </AuthProvider>
+        </Providers>
       </body>
     </html>
   );

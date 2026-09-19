@@ -1,85 +1,145 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { PasswordInput, PasswordRules } from "@/components/PasswordInput";
+import { useRegister } from "@/hooks/queries";
+import { registerSchema, RegisterValues } from "@/lib/schemas";
+import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    role: "buyer",
+  const registerMutation = useRegister();
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<RegisterValues>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+      role: "buyer",
+    },
   });
-  const [error, setError] = useState("");
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    try {
-      const data = await api<{ email: string; devOtp?: string }>("/api/auth/register", {
-        method: "POST",
-        body: JSON.stringify(form),
-      });
-      const qs = new URLSearchParams({ email: data.email });
-      if (data.devOtp) qs.set("otp", data.devOtp);
-      router.push(`/auth/verify?${qs}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed");
-    }
-  }
+  const role = watch("role");
+  const password = watch("password");
+
+  const onSubmit = handleSubmit(
+    async (values) => {
+      try {
+        const data = await registerMutation.mutateAsync(values);
+        toastSuccess("Account created — check your email for the OTP");
+        const qs = new URLSearchParams({ email: data.email });
+        if (data.devOtp) qs.set("otp", data.devOtp);
+        router.push(`/auth/verify?${qs}`);
+      } catch (err) {
+        toastFromError(err, "Registration failed");
+      }
+    },
+    (formErrors) => toastValidationErrors(formErrors)
+  );
 
   return (
     <div className="mx-auto max-w-md px-4 py-16">
-      <h1 className="font-[family-name:var(--font-display)] text-4xl">Register</h1>
-      <p className="mt-2 text-[var(--muted)]">
-        Strong password required (8+ chars, uppercase, number).
-      </p>
-      <form onSubmit={onSubmit} className="panel mt-8 space-y-4 p-6">
-        <input
-          className="field"
-          placeholder="Full name"
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          required
-        />
-        <input
-          className="field"
-          type="email"
-          placeholder="Email"
-          value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })}
-          required
-        />
-        <input
-          className="field"
-          type="password"
-          placeholder="Password"
-          value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })}
-          required
-        />
-        <select
-          className="field"
-          value={form.role}
-          onChange={(e) => setForm({ ...form, role: e.target.value })}
-        >
-          <option value="buyer">Buyer</option>
-          <option value="seller">Seller</option>
-        </select>
-        {error && <p className="text-sm text-red-700">{error}</p>}
-        <button className="btn btn-primary w-full" type="submit">
-          Create account
-        </button>
-      </form>
-      <p className="mt-4 text-sm text-[var(--muted)]">
-        Already registered?{" "}
-        <Link href="/auth/login" className="text-[var(--accent)]">
-          Log in
-        </Link>
-      </p>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-[family-name:var(--font-display)] text-4xl">
+            Register
+          </CardTitle>
+          <CardDescription>
+            Create an account to bid or list auctions.
+          </CardDescription>
+        </CardHeader>
+        <form onSubmit={onSubmit}>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Full name</Label>
+              <Input id="name" {...register("name")} />
+              {errors.name && (
+                <p className="text-sm text-destructive">{errors.name.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" type="email" {...register("email")} />
+              {errors.email && (
+                <p className="text-sm text-destructive">{errors.email.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">Password</Label>
+              <PasswordRules value={password} />
+              <PasswordInput
+                id="password"
+                autoComplete="new-password"
+                {...register("password")}
+              />
+              {errors.password && (
+                <p className="text-sm text-destructive">
+                  {errors.password.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select
+                value={role}
+                onValueChange={(value) =>
+                  setValue("role", (value ?? "buyer") as "buyer" | "seller")
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="buyer">Buyer</SelectItem>
+                  <SelectItem value="seller">Seller</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+          <CardFooter className="flex flex-col gap-3">
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isSubmitting || registerMutation.isPending}
+            >
+              Create account
+            </Button>
+            <p className="text-sm text-muted-foreground">
+              Already registered?{" "}
+              <Link href="/auth/login" className="text-primary hover:underline">
+                Log in
+              </Link>
+            </p>
+          </CardFooter>
+        </form>
+      </Card>
     </div>
   );
 }

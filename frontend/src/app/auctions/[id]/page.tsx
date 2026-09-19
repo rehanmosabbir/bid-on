@@ -1,60 +1,74 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useEffect } from "react";
+import { useParams } from "next/navigation";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { Countdown } from "@/components/Countdown";
-import { api, Auction, formatBdt, mediaUrl } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  queryKeys,
+  useAuction,
+  usePlaceBid,
+  useSubmitReview,
+  useToggleWatchlist,
+} from "@/hooks/queries";
+import { formatBdt, mediaUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useSocket } from "@/lib/socket";
+import { bidSchema, BidValues, reviewSchema, ReviewValues } from "@/lib/schemas";
+import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
 
 export default function AuctionDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
   const socket = useSocket();
-  const [auction, setAuction] = useState<Auction | null>(null);
-  const [watching, setWatching] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const qc = useQueryClient();
+  const { data, isLoading, error, refetch } = useAuction(id);
+  const placeBid = usePlaceBid(id);
+  const toggleWatch = useToggleWatchlist(id);
+  const submitReview = useSubmitReview();
 
-  const load = async () => {
-    const data = await api<{ auction: Auction; watching: boolean }>(
-      `/api/auctions/${id}`
-    );
-    setAuction(data.auction);
-    setWatching(data.watching);
-    const min =
-      Number(data.auction.currentBid) > 0
-        ? Number(data.auction.currentBid) + 1
-        : Number(data.auction.startPrice);
-    setAmount(String(min));
-  };
+  const auction = data?.auction;
+  const watching = data?.watching ?? false;
+
+  const bidForm = useForm<BidValues>({
+    resolver: zodResolver(bidSchema),
+  });
+
+  const reviewForm = useForm<ReviewValues>({
+    resolver: zodResolver(reviewSchema),
+    defaultValues: { rating: 5, comment: "" },
+  });
 
   useEffect(() => {
-    load().catch((e) => setError(e.message));
-  }, [id]);
+    if (!auction) return;
+    const min =
+      Number(auction.currentBid) > 0
+        ? Number(auction.currentBid) + 1
+        : Number(auction.startPrice);
+    bidForm.reset({ amount: min });
+  }, [auction?.id, auction?.currentBid, auction?.startPrice]);
 
   useEffect(() => {
     if (!socket || !id) return;
     socket.emit("auction:join", id);
-    const onBid = (payload: {
-      bid: Auction["bids"] extends (infer B)[] | undefined ? B : never;
-      currentBid: number;
-      bidCount: number;
-    }) => {
-      setAuction((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          currentBid: payload.currentBid,
-          bidCount: payload.bidCount,
-          bids: [payload.bid as never, ...(prev.bids || [])].slice(0, 20),
-        };
-      });
-      setAmount(String(Number(payload.currentBid) + 1));
+    const onBid = () => {
+      qc.invalidateQueries({ queryKey: queryKeys.auction(id) });
     };
-    const onEnd = () => load();
+    const onEnd = () => refetch();
     socket.on("bid:new", onBid);
     socket.on("auction:ended", onEnd);
     return () => {
@@ -62,63 +76,55 @@ export default function AuctionDetailPage() {
       socket.off("bid:new", onBid);
       socket.off("auction:ended", onEnd);
     };
-  }, [socket, id]);
+  }, [socket, id, qc, refetch]);
 
-  async function placeBid(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    setMessage("");
-    try {
-      await api(`/api/auctions/${id}/bids`, {
-        method: "POST",
-        body: JSON.stringify({ amount: Number(amount) }),
-      });
-      setMessage("Bid placed.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Bid failed");
-    }
+  if (isLoading) {
+    return (
+      <p className="mx-auto max-w-6xl px-4 py-16 text-muted-foreground">
+        Loading…
+      </p>
+    );
   }
 
-  async function toggleWatch() {
-    if (!user) return;
-    if (watching) {
-      await api(`/api/watchlist/${id}`, { method: "DELETE" });
-      setWatching(false);
-    } else {
-      await api(`/api/watchlist/${id}`, { method: "POST" });
-      setWatching(true);
-    }
-  }
-
-  if (!auction) {
-    return <p className="mx-auto max-w-6xl px-4 py-16 text-[var(--muted)]">{error || "Loading…"}</p>;
+  if (error || !auction) {
+    return (
+      <p className="mx-auto max-w-6xl px-4 py-16 text-destructive">
+        {error instanceof Error ? error.message : "Auction not found"}
+      </p>
+    );
   }
 
   const image = mediaUrl(auction.images[0]);
-  const canPay =
-    user &&
-    auction.winner?.id === user.id &&
-    ["ended", "sold"].includes(auction.status);
+  const isEnded = ["ended", "sold"].includes(auction.status);
+  const isWinner = Boolean(user && auction.winner?.id === user.id);
+  const canPay = Boolean(isWinner && isEnded && auction.status !== "sold");
+  const alreadyPaid = auction.status === "sold" && isWinner;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 lg:grid-cols-[1.2fr_0.8fr]">
       <div>
-        <div className="overflow-hidden border border-[var(--line)] bg-[var(--ink)]/5">
+        <div className="overflow-hidden rounded-xl border border-border bg-muted">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image} alt={auction.title} className="aspect-[4/3] w-full object-cover" />
+          <img
+            src={image}
+            alt={auction.title}
+            className="aspect-[4/3] w-full object-cover"
+          />
         </div>
-        <h1 className="mt-8 font-[family-name:var(--font-display)] text-4xl">
+        <h1 className="mt-8 font-[family-name:var(--font-display)] text-4xl sm:text-5xl">
           {auction.title}
         </h1>
-        <p className="mt-2 text-sm uppercase tracking-[0.16em] text-[var(--muted)]">
+        <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
           {auction.category?.name} · {auction.status}
         </p>
-        <p className="mt-6 whitespace-pre-wrap leading-relaxed text-[var(--muted)]">
+        <p className="mt-6 whitespace-pre-wrap leading-relaxed text-muted-foreground">
           {auction.description}
         </p>
         <div className="mt-10">
-          <h2 className="font-[family-name:var(--font-display)] text-2xl">Bid history</h2>
-          <ul className="mt-4 divide-y divide-[var(--line)] border-t border-[var(--line)]">
+          <h2 className="font-[family-name:var(--font-display)] text-2xl">
+            Bid history
+          </h2>
+          <ul className="mt-4 divide-y divide-border border-t border-border">
             {(auction.bids || []).map((b) => (
               <li key={b.id} className="flex justify-between py-3 text-sm">
                 <span>{b.bidder.name}</span>
@@ -126,98 +132,215 @@ export default function AuctionDetailPage() {
               </li>
             ))}
             {(auction.bids || []).length === 0 && (
-              <li className="py-4 text-[var(--muted)]">No bids yet.</li>
+              <li className="py-4 text-muted-foreground">No bids yet.</li>
             )}
           </ul>
         </div>
       </div>
 
-      <aside className="panel h-fit p-6">
-        <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">Current bid</p>
-        <p className="mt-2 font-[family-name:var(--font-display)] text-4xl text-[var(--accent)]">
-          {formatBdt(
-            Number(auction.currentBid) > 0 ? auction.currentBid : auction.startPrice
-          )}
-        </p>
-        <p className="mt-4 text-sm text-[var(--muted)]">
-          Time left · <Countdown endsAt={auction.endsAt} />
-        </p>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          {auction.bidCount} bids · Seller {auction.seller?.name}
-        </p>
-
-        {auction.status === "live" && user ? (
-          <form onSubmit={placeBid} className="mt-6 space-y-3">
-            <input
-              className="field"
-              type="number"
-              min={1}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-            />
-            <button className="btn btn-accent w-full" type="submit">
-              Place bid
-            </button>
-          </form>
-        ) : auction.status === "live" ? (
-          <Link href="/auth/login" className="btn btn-primary mt-6 w-full">
-            Log in to bid
-          </Link>
-        ) : null}
-
-        {user && (
-          <button className="btn btn-ghost mt-3 w-full" onClick={toggleWatch}>
-            {watching ? "Remove watchlist" : "Add to watchlist"}
-          </button>
-        )}
-
-        {canPay && (
-          <Link href={`/checkout/${auction.id}`} className="btn btn-primary mt-3 w-full">
-            Pay now
-          </Link>
-        )}
-
-        {user &&
-          ["ended", "sold"].includes(auction.status) &&
-          (user.id === auction.winner?.id || user.id === auction.seller?.id) && (
+      <Card className="sticky top-24 h-fit overflow-hidden py-0">
+        <div className="bg-foreground px-6 py-5 text-background">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-background/50">
+            Current bid
+          </p>
+          <p className="mt-2 font-[family-name:var(--font-display)] text-4xl">
+            {formatBdt(
+              Number(auction.currentBid) > 0
+                ? auction.currentBid
+                : auction.startPrice
+            )}
+          </p>
+          <p className="mt-3 text-sm text-[var(--brand-hot)]">
+            <Countdown endsAt={auction.endsAt} />
+          </p>
+          <p className="mt-1 text-xs text-background/50">
+            {auction.bidCount} bids · Seller {auction.seller?.name}
+          </p>
+        </div>
+        <CardContent className="space-y-3 p-6">
+          {auction.status === "live" && user ? (
             <form
-              className="mt-4 space-y-2 border-t border-[var(--line)] pt-4"
-              onSubmit={async (e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
+              onSubmit={bidForm.handleSubmit(
+                async (values) => {
+                  try {
+                    await placeBid.mutateAsync(values.amount);
+                    toastSuccess("Bid placed successfully");
+                  } catch (err) {
+                    const msg = toastFromError(err, "Bid failed");
+                    bidForm.setError("root", { message: msg });
+                  }
+                },
+                (formErrors) => toastValidationErrors(formErrors)
+              )}
+              className="space-y-3"
+            >
+              <div className="space-y-2">
+                <Label htmlFor="bid-amount">Your bid (BDT)</Label>
+                <Input
+                  id="bid-amount"
+                  type="number"
+                  min={1}
+                  {...bidForm.register("amount")}
+                />
+              </div>
+              {bidForm.formState.errors.amount && (
+                <p className="text-sm text-destructive">
+                  {bidForm.formState.errors.amount.message}
+                </p>
+              )}
+              {bidForm.formState.errors.root && (
+                <p className="text-sm text-destructive">
+                  {bidForm.formState.errors.root.message}
+                </p>
+              )}
+              <Button
+                className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+                type="submit"
+                disabled={placeBid.isPending}
+              >
+                {placeBid.isPending ? "Placing…" : "Place bid"}
+              </Button>
+            </form>
+          ) : auction.status === "live" ? (
+            <Link href="/auth/login">
+              <Button className="w-full">Log in to bid</Button>
+            </Link>
+          ) : null}
+
+          {isEnded && (
+            <div className="space-y-2 rounded-lg border border-border bg-muted/40 px-3 py-3 text-sm">
+              {auction.winner ? (
+                <>
+                  <p className="font-medium">
+                    Winner: {auction.winner.name}
+                    {isWinner ? " (you)" : ""}
+                  </p>
+                  {canPay && (
+                    <p className="text-muted-foreground">
+                      Complete payment to claim this lot.
+                    </p>
+                  )}
+                  {alreadyPaid && (
+                    <p className="text-primary">Payment completed.</p>
+                  )}
+                  {!user && (
+                    <p className="text-muted-foreground">
+                      Log in as the winner to pay.
+                    </p>
+                  )}
+                  {user && !isWinner && !alreadyPaid && (
+                    <p className="text-muted-foreground">
+                      Only the winning bidder can check out.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-muted-foreground">
+                  Auction ended with no sale
+                  {auction.reservePrice
+                    ? " (reserve price was not met)."
+                    : " (no valid bids)."}
+                </p>
+              )}
+            </div>
+          )}
+
+          {user && (
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={async () => {
                 try {
-                  await api("/api/reviews", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      auctionId: auction.id,
-                      rating: Number(fd.get("rating")),
-                      comment: String(fd.get("comment") || ""),
-                    }),
-                  });
-                  setMessage("Review submitted.");
+                  await toggleWatch.mutateAsync(watching);
+                  toastSuccess(
+                    watching ? "Removed from watchlist" : "Added to watchlist"
+                  );
                 } catch (err) {
-                  setError(err instanceof Error ? err.message : "Review failed");
+                  toastFromError(err, "Watchlist update failed");
                 }
               }}
+              disabled={toggleWatch.isPending}
             >
-              <p className="text-sm font-medium">Leave a rating</p>
-              <select name="rating" className="field" defaultValue="5">
-                {[5, 4, 3, 2, 1].map((n) => (
-                  <option key={n} value={n}>
-                    {n} stars
-                  </option>
-                ))}
-              </select>
-              <input name="comment" className="field" placeholder="Comment (optional)" />
-              <button className="btn btn-ghost w-full" type="submit">
-                Submit review
-              </button>
-            </form>
+              {watching ? "Remove watchlist" : "Add to watchlist"}
+            </Button>
           )}
 
-        {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-        {message && <p className="mt-3 text-sm text-[var(--accent)]">{message}</p>}
-      </aside>
+          {canPay && (
+            <Link href={`/checkout/${auction.id}`}>
+              <Button className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
+                Pay now
+              </Button>
+            </Link>
+          )}
+
+          {!user && isEnded && auction.winner && (
+            <Link href="/auth/login">
+              <Button className="w-full">Log in to pay</Button>
+            </Link>
+          )}
+
+          {user &&
+            ["ended", "sold"].includes(auction.status) &&
+            (user.id === auction.winner?.id ||
+              user.id === auction.seller?.id) && (
+              <form
+                className="space-y-2 border-t border-border pt-4"
+                onSubmit={reviewForm.handleSubmit(
+                  async (values) => {
+                    try {
+                      await submitReview.mutateAsync({
+                        auctionId: auction.id,
+                        rating: values.rating,
+                        comment: values.comment,
+                      });
+                      toastSuccess("Review submitted");
+                    } catch (err) {
+                      const msg = toastFromError(err, "Review failed");
+                      reviewForm.setError("root", { message: msg });
+                    }
+                  },
+                  (formErrors) => toastValidationErrors(formErrors)
+                )}
+              >
+                <p className="text-sm font-medium">Leave a rating</p>
+                <Select
+                  value={String(reviewForm.watch("rating") ?? 5)}
+                  onValueChange={(value) =>
+                    reviewForm.setValue("rating", Number(value ?? 5))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Rating" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[5, 4, 3, 2, 1].map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n} stars
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  placeholder="Comment (optional)"
+                  {...reviewForm.register("comment")}
+                />
+                {reviewForm.formState.errors.root && (
+                  <p className="text-sm text-destructive">
+                    {reviewForm.formState.errors.root.message}
+                  </p>
+                )}
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  type="submit"
+                  disabled={submitReview.isPending}
+                >
+                  Submit review
+                </Button>
+              </form>
+            )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

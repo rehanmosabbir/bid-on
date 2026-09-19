@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useForm } from "react-hook-form";
 import {
   Bar,
   BarChart,
@@ -11,111 +10,63 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, Auction, formatBdt } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import {
+  useAdminAuctions,
+  useAdminStats,
+  useAdminUsers,
+  useApproveAuction,
+  useRejectAuction,
+  useSuspendUser,
+} from "@/hooks/queries";
+import { Auction, formatBdt } from "@/lib/api";
+import { toastFromError, toastSuccess } from "@/lib/toast";
+import { RequirePermission } from "@/components/RequirePermission";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-type Stats = {
-  users: number;
-  auctions: number;
-  live: number;
-  pending: number;
-  bids: number;
-  revenue: number;
-};
+function AdminInner() {
+  const statsQ = useAdminStats(true);
+  const pendingQ = useAdminAuctions("pending", true);
+  const usersQ = useAdminUsers(true);
+  const auctionsQ = useAdminAuctions(undefined, true);
+  const approve = useApproveAuction();
+  const reject = useRejectAuction();
+  const suspend = useSuspendUser();
 
-type AdminUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  suspended: boolean;
-  verified: boolean;
-};
+  const rejectForm = useForm({
+    defaultValues: { reason: "Does not meet guidelines" },
+  });
 
-export default function AdminPage() {
-  const { user, loading } = useAuth();
-  const router = useRouter();
-  const [tab, setTab] = useState<"overview" | "pending" | "users" | "auctions">(
-    "overview"
-  );
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [bidsByDay, setBidsByDay] = useState<Array<{ day: string; count: number }>>(
-    []
-  );
-  const [pending, setPending] = useState<Auction[]>([]);
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [rejectReason, setRejectReason] = useState("Does not meet guidelines");
-
-  useEffect(() => {
-    if (!loading && (!user || user.role !== "admin")) {
-      router.push("/auth/login");
-    }
-  }, [user, loading, router]);
-
-  async function load() {
-    const s = await api<{
-      stats: Stats;
-      bidsByDay: Array<{ day: string; count: number }>;
-    }>("/api/admin/stats");
-    setStats(s.stats);
-    setBidsByDay(
-      s.bidsByDay.map((b) => ({
-        day: new Date(b.day).toLocaleDateString(),
-        count: b.count,
-      }))
-    );
-    const p = await api<{ auctions: Auction[] }>("/api/admin/auctions?status=pending");
-    setPending(p.auctions);
-    const u = await api<{ users: AdminUser[] }>("/api/admin/users");
-    setUsers(u.users);
-    const a = await api<{ auctions: Auction[] }>("/api/admin/auctions");
-    setAuctions(a.auctions);
-  }
-
-  useEffect(() => {
-    if (user?.role === "admin") load().catch(console.error);
-  }, [user]);
-
-  async function approve(id: string) {
-    await api(`/api/auctions/${id}/approve`, { method: "POST" });
-    await load();
-  }
-
-  async function reject(id: string) {
-    await api(`/api/auctions/${id}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ reason: rejectReason }),
-    });
-    await load();
-  }
-
-  async function toggleSuspend(id: string, suspended: boolean) {
-    await api(`/api/admin/users/${id}/suspend`, {
-      method: "PATCH",
-      body: JSON.stringify({ suspended: !suspended }),
-    });
-    await load();
-  }
-
-  if (!user || user.role !== "admin") return null;
+  const stats = statsQ.data?.stats;
+  const bidsByDay = (statsQ.data?.bidsByDay || []).map((b) => ({
+    day: new Date(b.day).toLocaleDateString(),
+    count: b.count,
+  }));
+  const pending = pendingQ.data?.auctions || [];
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-12">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
             Admin panel
           </p>
           <h1 className="mt-2 font-[family-name:var(--font-display)] text-4xl">
             Operations
           </h1>
         </div>
-        <a
-          className="btn btn-ghost"
-          href={`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"}/api/admin/reports/csv`}
-          onClick={(e) => {
-            e.preventDefault();
+        <Button
+          variant="ghost"
+          onClick={() => {
             const token = localStorage.getItem("token");
             fetch(
               `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000"}/api/admin/reports/csv`,
@@ -133,140 +84,201 @@ export default function AdminPage() {
           }}
         >
           Export CSV
-        </a>
+        </Button>
       </div>
 
-      <div className="mt-8 flex flex-wrap gap-2">
-        {(
-          [
-            ["overview", "Overview"],
-            ["pending", `Approvals (${pending.length})`],
-            ["users", "Users"],
-            ["auctions", "Auctions"],
-          ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            className={`btn ${tab === key ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Tabs defaultValue="overview" className="mt-8">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="pending">
+            Approvals ({pending.length})
+          </TabsTrigger>
+          <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="auctions">Auctions</TabsTrigger>
+        </TabsList>
 
-      {tab === "overview" && stats && (
-        <div className="mt-8 space-y-8">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              ["Users", stats.users],
-              ["Auctions", stats.auctions],
-              ["Live", stats.live],
-              ["Pending", stats.pending],
-              ["Bids", stats.bids],
-              ["Revenue", formatBdt(stats.revenue)],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="panel p-5">
-                <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
-                  {label}
-                </p>
-                <p className="mt-2 font-[family-name:var(--font-display)] text-3xl">
-                  {value}
-                </p>
+        <TabsContent value="overview" className="mt-6">
+          {stats && (
+            <div className="space-y-8">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[
+                  ["Users", stats.users],
+                  ["Auctions", stats.auctions],
+                  ["Live", stats.live],
+                  ["Pending", stats.pending],
+                  ["Bids", stats.bids],
+                  ["Revenue", formatBdt(stats.revenue)],
+                ].map(([label, value]) => (
+                  <Card key={String(label)}>
+                    <CardHeader className="pb-2">
+                      <CardDescription className="uppercase tracking-[0.16em]">
+                        {label}
+                      </CardDescription>
+                      <CardTitle className="font-[family-name:var(--font-display)] text-3xl">
+                        {value}
+                      </CardTitle>
+                    </CardHeader>
+                  </Card>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="panel h-72 p-4">
-            <p className="mb-4 text-sm text-[var(--muted)]">Bids · last 14 days</p>
-            <ResponsiveContainer width="100%" height="90%">
-              <BarChart data={bidsByDay}>
-                <XAxis dataKey="day" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar dataKey="count" fill="#0f6e56" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+              <Card className="h-72">
+                <CardHeader>
+                  <CardDescription>Bids · last 14 days</CardDescription>
+                </CardHeader>
+                <CardContent className="h-[85%]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={bidsByDay}>
+                      <XAxis dataKey="day" tick={{ fontSize: 11 }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Bar
+                        dataKey="count"
+                        fill="var(--primary)"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </TabsContent>
 
-      {tab === "pending" && (
-        <div className="mt-8 space-y-4">
-          <input
-            className="field max-w-md"
-            value={rejectReason}
-            onChange={(e) => setRejectReason(e.target.value)}
+        <TabsContent value="pending" className="mt-6 space-y-4">
+          <Input
+            className="max-w-md"
+            {...rejectForm.register("reason")}
             placeholder="Reject reason"
           />
           {pending.length === 0 && (
-            <p className="text-[var(--muted)]">No pending listings.</p>
+            <p className="text-muted-foreground">No pending listings.</p>
           )}
           {pending.map((a) => (
-            <div key={a.id} className="panel flex flex-wrap items-center justify-between gap-4 p-5">
-              <div>
-                <Link href={`/auctions/${a.id}`} className="text-lg font-medium">
-                  {a.title}
-                </Link>
-                <p className="text-sm text-[var(--muted)]">
-                  {formatBdt(a.startPrice)} · {(a as Auction & { seller?: { name: string } }).seller?.name}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button className="btn btn-accent" onClick={() => approve(a.id)}>
-                  Approve
-                </button>
-                <button className="btn btn-ghost" onClick={() => reject(a.id)}>
-                  Reject
-                </button>
-              </div>
-            </div>
+            <Card key={a.id}>
+              <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+                <div>
+                  <Link
+                    href={`/auctions/${a.id}`}
+                    className="text-lg font-medium hover:underline"
+                  >
+                    {a.title}
+                  </Link>
+                  <p className="text-sm text-muted-foreground">
+                    {formatBdt(a.startPrice)} ·{" "}
+                    {(a as Auction & { seller?: { name: string } }).seller?.name}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    className="bg-accent text-accent-foreground hover:bg-accent/90"
+                    onClick={async () => {
+                      try {
+                        await approve.mutateAsync(a.id);
+                        toastSuccess(`Approved “${a.title}”`);
+                      } catch (err) {
+                        toastFromError(err, "Approve failed");
+                      }
+                    }}
+                    disabled={approve.isPending}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        await reject.mutateAsync({
+                          id: a.id,
+                          reason: rejectForm.getValues("reason"),
+                        });
+                        toastSuccess(`Rejected “${a.title}”`);
+                      } catch (err) {
+                        toastFromError(err, "Reject failed");
+                      }
+                    }}
+                    disabled={reject.isPending}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ))}
-        </div>
-      )}
+        </TabsContent>
 
-      {tab === "users" && (
-        <div className="mt-8 panel divide-y divide-[var(--line)]">
-          {users.map((u) => (
-            <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div>
-                <p className="font-medium">
-                  {u.name}{" "}
-                  <span className="text-xs uppercase text-[var(--muted)]">
-                    {u.role}
+        <TabsContent value="users" className="mt-6">
+          <Card className="py-0">
+            <CardContent className="divide-y divide-border p-0">
+              {(usersQ.data?.users || []).map((u) => (
+                <div
+                  key={u.id}
+                  className="flex flex-wrap items-center justify-between gap-3 p-4"
+                >
+                  <div>
+                    <p className="font-medium">
+                      {u.name}{" "}
+                      <Badge variant="secondary" className="uppercase">
+                        {u.role}
+                      </Badge>
+                    </p>
+                    <p className="text-sm text-muted-foreground">{u.email}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        await suspend.mutateAsync({
+                          id: u.id,
+                          suspended: !u.suspended,
+                        });
+                        toastSuccess(
+                          u.suspended
+                            ? `${u.name} unsuspended`
+                            : `${u.name} suspended`
+                        );
+                      } catch (err) {
+                        toastFromError(err, "User update failed");
+                      }
+                    }}
+                  >
+                    {u.suspended ? "Unsuspend" : "Suspend"}
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="auctions" className="mt-6">
+          <Card className="py-0">
+            <CardContent className="divide-y divide-border p-0">
+              {(auctionsQ.data?.auctions || []).map((a) => (
+                <Link
+                  key={a.id}
+                  href={`/auctions/${a.id}`}
+                  className="flex justify-between gap-4 p-4 hover:bg-muted/50"
+                >
+                  <span className="flex items-center gap-2">
+                    {a.title}
+                    <Badge variant="secondary" className="uppercase">
+                      {a.status}
+                    </Badge>
                   </span>
-                </p>
-                <p className="text-sm text-[var(--muted)]">{u.email}</p>
-              </div>
-              <button
-                className="btn btn-ghost"
-                onClick={() => toggleSuspend(u.id, u.suspended)}
-              >
-                {u.suspended ? "Unsuspend" : "Suspend"}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {tab === "auctions" && (
-        <div className="mt-8 panel divide-y divide-[var(--line)]">
-          {auctions.map((a) => (
-            <Link
-              key={a.id}
-              href={`/auctions/${a.id}`}
-              className="flex justify-between gap-4 p-4 hover:bg-[var(--surface-2)]/40"
-            >
-              <span>
-                {a.title}{" "}
-                <span className="text-xs uppercase text-[var(--muted)]">
-                  {a.status}
-                </span>
-              </span>
-              <span>{formatBdt(a.currentBid || a.startPrice)}</span>
-            </Link>
-          ))}
-        </div>
-      )}
+                  <span>{formatBdt(a.currentBid || a.startPrice)}</span>
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
+  );
+}
+
+export default function AdminPage() {
+  return (
+    <RequirePermission permission="admin:access">
+      <AdminInner />
+    </RequirePermission>
   );
 }

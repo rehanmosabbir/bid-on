@@ -1,150 +1,249 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { useCategories, useCreateAuction } from "@/hooks/queries";
+import { RequirePermission } from "@/components/RequirePermission";
+import { sellSchema, SellValues } from "@/lib/schemas";
+import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
 
-export default function SellPage() {
-  const { user, loading } = useAuth();
+function SellInner() {
   const router = useRouter();
-  const [categories, setCategories] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
-  const [error, setError] = useState("");
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [form, setForm] = useState({
-    title: "",
-    description: "",
-    categoryId: "",
-    startPrice: "",
-    reservePrice: "",
-    maxPriceCap: "",
-    durationHours: "72",
-    imageUrl: "",
+  const { data: catData } = useCategories();
+  const createAuction = useCreateAuction();
+
+  const {
+    register,
+    handleSubmit,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+    setError,
+  } = useForm<SellValues>({
+    resolver: zodResolver(sellSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      categoryId: "",
+      startPrice: 0,
+      durationMinutes: 60,
+      imageUrl: "",
+      reservePrice: "",
+      maxPriceCap: "",
+    },
   });
 
-  useEffect(() => {
-    if (!loading && (!user || (user.role !== "seller" && user.role !== "admin"))) {
-      router.push("/auth/login");
-    }
-  }, [user, loading, router]);
+  const categoryId = watch("categoryId");
 
   useEffect(() => {
-    api<{ categories: Array<{ id: string; name: string }> }>("/api/categories").then(
-      (d) => {
-        setCategories(d.categories);
-        if (d.categories[0]) {
-          setForm((f) => ({ ...f, categoryId: d.categories[0].id }));
-        }
-      }
-    );
-  }, []);
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    try {
-      const body = new FormData();
-      Object.entries(form).forEach(([k, v]) => {
-        if (v) body.append(k, v);
-      });
-      if (files) Array.from(files).forEach((f) => body.append("images", f));
-      const data = await api<{ auction: { id: string } }>("/api/auctions", {
-        method: "POST",
-        body,
-      });
-      router.push(`/auctions/${data.auction.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create listing");
+    if (catData?.categories?.[0]?.id) {
+      setValue("categoryId", catData.categories[0].id);
     }
-  }
-
-  if (!user) return null;
+  }, [catData, setValue]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="font-[family-name:var(--font-display)] text-4xl">
-        Create listing
-      </h1>
-      <p className="mt-2 text-[var(--muted)]">
-        Submissions require admin approval before going live.
-      </p>
-      <form onSubmit={onSubmit} className="panel mt-8 space-y-4 p-6">
-        <input
-          className="field"
-          placeholder="Title"
-          value={form.title}
-          onChange={(e) => setForm({ ...form, title: e.target.value })}
-          required
-        />
-        <textarea
-          className="field min-h-32"
-          placeholder="Description"
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          required
-        />
-        <select
-          className="field"
-          value={form.categoryId}
-          onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-[family-name:var(--font-display)] text-4xl">
+            Create listing
+          </CardTitle>
+          <CardDescription>
+            Submissions require admin approval before going live.
+          </CardDescription>
+        </CardHeader>
+        <form
+          onSubmit={handleSubmit(
+            async (values) => {
+              try {
+                const body = new FormData();
+                body.append("title", values.title);
+                body.append("description", values.description);
+                body.append("categoryId", values.categoryId);
+                body.append("startPrice", String(values.startPrice));
+                body.append("durationMinutes", String(values.durationMinutes));
+                if (values.reservePrice) {
+                  body.append("reservePrice", String(values.reservePrice));
+                }
+                if (values.maxPriceCap) {
+                  body.append("maxPriceCap", String(values.maxPriceCap));
+                }
+                if (values.imageUrl) body.append("imageUrl", values.imageUrl);
+
+                const fileInput = document.getElementById(
+                  "sell-images"
+                ) as HTMLInputElement | null;
+                if (fileInput?.files) {
+                  Array.from(fileInput.files).forEach((f) =>
+                    body.append("images", f)
+                  );
+                }
+
+                const data = await createAuction.mutateAsync(body);
+                toastSuccess("Listing submitted for admin approval");
+                router.push(`/auctions/${data.auction.id}`);
+              } catch (err) {
+                const msg = toastFromError(err, "Failed to create listing");
+                setError("root", { message: msg });
+              }
+            },
+            (formErrors) => toastValidationErrors(formErrors)
+          )}
         >
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <input
-            className="field"
-            type="number"
-            placeholder="Start price (BDT)"
-            value={form.startPrice}
-            onChange={(e) => setForm({ ...form, startPrice: e.target.value })}
-            required
-          />
-          <input
-            className="field"
-            type="number"
-            placeholder="Reserve (optional)"
-            value={form.reservePrice}
-            onChange={(e) => setForm({ ...form, reservePrice: e.target.value })}
-          />
-          <input
-            className="field"
-            type="number"
-            placeholder="Max cap (optional)"
-            value={form.maxPriceCap}
-            onChange={(e) => setForm({ ...form, maxPriceCap: e.target.value })}
-          />
-        </div>
-        <input
-          className="field"
-          type="number"
-          placeholder="Duration hours"
-          value={form.durationHours}
-          onChange={(e) => setForm({ ...form, durationHours: e.target.value })}
-        />
-        <input
-          className="field"
-          type="file"
-          accept="image/*"
-          multiple
-          onChange={(e) => setFiles(e.target.files)}
-        />
-        <input
-          className="field"
-          placeholder="Or paste image URL"
-          value={form.imageUrl}
-          onChange={(e) => setForm({ ...form, imageUrl: e.target.value })}
-        />
-        {error && <p className="text-sm text-red-700">{error}</p>}
-        <button className="btn btn-accent" type="submit">
-          Submit for approval
-        </button>
-      </form>
+          <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="title">Title</Label>
+              <Input id="title" placeholder="Title" {...register("title")} />
+              {errors.title && (
+                <p className="text-sm text-destructive">{errors.title.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                className="min-h-32"
+                placeholder="Description"
+                {...register("description")}
+              />
+              {errors.description && (
+                <p className="text-sm text-destructive">
+                  {errors.description.message}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={categoryId}
+                onValueChange={(value) => setValue("categoryId", value ?? "")}
+                items={Object.fromEntries(
+                  (catData?.categories || []).map((c) => [c.id, c.name])
+                )}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(catData?.categories || []).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="startPrice">Start price (BDT)</Label>
+                <Input
+                  id="startPrice"
+                  type="number"
+                  placeholder="Opening bid"
+                  {...register("startPrice")}
+                />
+                {errors.startPrice && (
+                  <p className="text-sm text-destructive">
+                    {errors.startPrice.message}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="reservePrice">Reserve price</Label>
+                <Input
+                  id="reservePrice"
+                  type="number"
+                  placeholder="Optional"
+                  {...register("reservePrice")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Minimum you’ll accept — auction won’t sell below this.
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="maxPriceCap">Max bid cap</Label>
+                <Input
+                  id="maxPriceCap"
+                  type="number"
+                  placeholder="Optional"
+                  {...register("maxPriceCap")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Highest bid allowed on this lot.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="durationMinutes">Duration (minutes)</Label>
+              <Input
+                id="durationMinutes"
+                type="number"
+                min={1}
+                placeholder="e.g. 60"
+                {...register("durationMinutes")}
+              />
+              <p className="text-xs text-muted-foreground">
+                How long the auction runs after it goes live (1–43200 min).
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sell-images">Images</Label>
+              <Input
+                id="sell-images"
+                type="file"
+                accept="image/*"
+                multiple
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="imageUrl">Or paste image URL</Label>
+              <Input id="imageUrl" {...register("imageUrl")} />
+            </div>
+            {errors.root && (
+              <p className="text-sm text-destructive">{errors.root.message}</p>
+            )}
+          </CardContent>
+          <CardFooter className="gap-3">
+            <Button
+              type="submit"
+              size="lg"
+              className="bg-accent text-accent-foreground hover:bg-accent/90"
+              disabled={isSubmitting || createAuction.isPending}
+            >
+              Submit for approval
+            </Button>
+          </CardFooter>
+        </form>
+      </Card>
     </div>
+  );
+}
+
+export default function SellPage() {
+  return (
+    <RequirePermission permission="listing:create">
+      <SellInner />
+    </RequirePermission>
   );
 }

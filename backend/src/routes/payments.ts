@@ -6,8 +6,13 @@ import { asyncHandler } from "../lib/asyncHandler";
 
 const router = Router();
 
+/** Checkout currency for sandbox — use usd if BDT isn't enabled on the Stripe account. */
+function getCurrency() {
+  return (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
+}
+
 function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY;
+  const key = process.env.STRIPE_SECRET_KEY?.trim();
   if (!key) return null;
   return new Stripe(key);
 }
@@ -37,7 +42,6 @@ router.post(
 
     const stripe = getStripe();
     if (!stripe) {
-      // Dev fallback without Stripe keys
       const txn = await prisma.transaction.create({
         data: {
           auctionId,
@@ -60,19 +64,48 @@ router.post(
       });
     }
 
+    // Reuse an open Checkout Session if one already exists
+    const pending = await prisma.transaction.findFirst({
+      where: {
+        auctionId,
+        buyerId: req.user!.id,
+        status: "pending",
+        stripeSessionId: { not: null },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (pending?.stripeSessionId) {
+      try {
+        const existingSession = await stripe.checkout.sessions.retrieve(
+          pending.stripeSessionId
+        );
+        if (existingSession.status === "open" && existingSession.url) {
+          return res.json({
+            url: existingSession.url,
+            sessionId: existingSession.id,
+            mode: "stripe",
+          });
+        }
+      } catch {
+        /* create a new session below */
+      }
+    }
+
+    const currency = getCurrency();
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      success_url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?success=1`,
+      customer_email: req.user!.email,
+      success_url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?success=1&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?canceled=1`,
       line_items: [
         {
           quantity: 1,
           price_data: {
-            currency: "bdt",
+            currency,
             unit_amount: Math.round(amount * 100),
             product_data: {
               name: auction.title,
-              description: `Won auction payment`,
+              description: "Won auction payment — Bid On",
             },
           },
         },
@@ -95,19 +128,65 @@ router.post(
       },
     });
 
-    res.json({ url: session.url, sessionId: session.id });
+    res.json({ url: session.url, sessionId: session.id, mode: "stripe" });
+  })
+);
+
+/** Confirm Checkout Session status after return from Stripe (sandbox-friendly). */
+router.get(
+  "/session-status",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const sessionId = String(req.query.session_id || "");
+    if (!sessionId) {
+      return res.status(400).json({ error: "session_id required" });
+    }
+
+    const stripe = getStripe();
+    if (!stripe) {
+      return res.json({ status: "complete", mode: "dev" });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.metadata?.buyerId && session.metadata.buyerId !== req.user!.id) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    // Fulfill if webhook hasn't landed yet (common in local sandbox)
+    if (
+      session.status === "complete" &&
+      session.payment_status === "paid" &&
+      session.metadata?.auctionId
+    ) {
+      await prisma.transaction.updateMany({
+        where: { stripeSessionId: session.id },
+        data: {
+          status: "completed",
+          stripePaymentId: String(session.payment_intent || ""),
+        },
+      });
+      await prisma.auction.update({
+        where: { id: session.metadata.auctionId },
+        data: { status: "sold" },
+      });
+    }
+
+    res.json({
+      status: session.status,
+      payment_status: session.payment_status,
+      mode: "stripe",
+    });
   })
 );
 
 export async function handleStripeWebhook(rawBody: Buffer, signature: string) {
   const stripe = getStripe();
-  if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) return null;
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+  if (!stripe || !secret) {
+    throw new Error("Stripe webhook secret not configured");
+  }
 
-  const event = stripe.webhooks.constructEvent(
-    rawBody,
-    signature,
-    process.env.STRIPE_WEBHOOK_SECRET
-  );
+  const event = stripe.webhooks.constructEvent(rawBody, signature, secret);
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;

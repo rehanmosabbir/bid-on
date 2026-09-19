@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../lib/auth";
+import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
 import { emitBidUpdate } from "../socket";
@@ -13,6 +14,7 @@ const router = Router({ mergeParams: true });
 router.post(
   "/",
   requireAuth,
+  requirePermission("bid:place"),
   asyncHandler(async (req, res) => {
     const amount = z.coerce.number().positive().parse(req.body.amount);
     const auctionId = param(req, "id") || param(req, "auctionId");

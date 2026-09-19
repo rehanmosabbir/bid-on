@@ -2,56 +2,69 @@ import { prisma } from "../lib/prisma";
 import { emitAuctionEnded } from "../socket";
 import { createNotification } from "../services/notifications";
 
-export async function closeExpiredAuctions() {
-  const now = new Date();
-  const expired = await prisma.auction.findMany({
-    where: { status: "live", endsAt: { lte: now } },
+/** Close a single live auction that has passed endsAt. Returns updated auction or null. */
+export async function finalizeExpiredAuction(auctionId: string) {
+  const auction = await prisma.auction.findUnique({ where: { id: auctionId } });
+  if (!auction || auction.status !== "live" || auction.endsAt > new Date()) {
+    return null;
+  }
+
+  const topBid = await prisma.bid.findFirst({
+    where: { auctionId: auction.id },
+    orderBy: [{ amount: "desc" }, { createdAt: "asc" }],
   });
 
-  for (const auction of expired) {
-    const topBid = await prisma.bid.findFirst({
-      where: { auctionId: auction.id },
-      orderBy: [{ amount: "desc" }, { createdAt: "asc" }],
-    });
+  const meetsReserve =
+    !auction.reservePrice ||
+    (topBid && Number(topBid.amount) >= Number(auction.reservePrice));
 
-    const meetsReserve =
-      !auction.reservePrice ||
-      (topBid && Number(topBid.amount) >= Number(auction.reservePrice));
+  const updated = await prisma.auction.update({
+    where: { id: auction.id },
+    data: {
+      status: "ended",
+      winnerId: meetsReserve && topBid ? topBid.bidderId : null,
+    },
+  });
 
-    const updated = await prisma.auction.update({
-      where: { id: auction.id },
-      data: {
-        status: "ended",
-        winnerId: meetsReserve && topBid ? topBid.bidderId : null,
-      },
-    });
+  emitAuctionEnded(auction.id, {
+    auctionId: auction.id,
+    winnerId: updated.winnerId,
+    finalBid: auction.currentBid,
+  });
 
-    emitAuctionEnded(auction.id, {
-      auctionId: auction.id,
-      winnerId: updated.winnerId,
-      finalBid: auction.currentBid,
-    });
-
-    if (updated.winnerId) {
-      await createNotification(
-        updated.winnerId,
-        "won",
-        `You won "${auction.title}" for ${auction.currentBid} BDT. Please complete payment.`,
-        { auctionId: auction.id }
-      );
-    }
-
+  if (updated.winnerId) {
     await createNotification(
-      auction.sellerId,
-      "general",
-      updated.winnerId
-        ? `Your auction "${auction.title}" ended. Winner will proceed to payment.`
-        : `Your auction "${auction.title}" ended with no successful sale.`,
+      updated.winnerId,
+      "won",
+      `You won "${auction.title}" for ${auction.currentBid} BDT. Please complete payment.`,
       { auctionId: auction.id }
     );
   }
 
-  // Ending soon alerts (within 1 hour, once-ish via meta check is light; send if unread none recent)
+  await createNotification(
+    auction.sellerId,
+    "general",
+    updated.winnerId
+      ? `Your auction "${auction.title}" ended. Winner will proceed to payment.`
+      : `Your auction "${auction.title}" ended with no successful sale.`,
+    { auctionId: auction.id }
+  );
+
+  return updated;
+}
+
+export async function closeExpiredAuctions() {
+  const now = new Date();
+  const expired = await prisma.auction.findMany({
+    where: { status: "live", endsAt: { lte: now } },
+    select: { id: true },
+  });
+
+  for (const auction of expired) {
+    await finalizeExpiredAuction(auction.id);
+  }
+
+  // Ending soon alerts (within 1 hour)
   const soon = await prisma.auction.findMany({
     where: {
       status: "live",

@@ -1,7 +1,7 @@
+import { Role } from "@prisma/client";
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { Role } from "@prisma/client";
-import { prisma } from "../lib/prisma";
+import { prisma } from "./prisma";
 
 export type AuthUser = {
   id: string;
@@ -28,20 +28,52 @@ export function signToken(user: AuthUser) {
   );
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const token =
+function extractToken(req: Request): string | undefined {
+  return (
     req.cookies?.token ||
     (req.headers.authorization?.startsWith("Bearer ")
       ? req.headers.authorization.slice(7)
-      : undefined);
+      : undefined)
+  );
+}
 
+/** Verify JWT, load user from DB, reject suspended/missing accounts, refresh role from DB. */
+export async function requireAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  const token = extractToken(req);
   if (!token) {
     return res.status(401).json({ error: "Authentication required" });
   }
 
   try {
     const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
-    req.user = payload;
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        name: true,
+        suspended: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+    if (user.suspended) {
+      return res.status(403).json({ error: "Account suspended" });
+    }
+
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+    };
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -49,19 +81,38 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
-  const token =
-    req.cookies?.token ||
-    (req.headers.authorization?.startsWith("Bearer ")
-      ? req.headers.authorization.slice(7)
-      : undefined);
-  if (token) {
+  const token = extractToken(req);
+  if (!token) {
+    next();
+    return;
+  }
+
+  void (async () => {
     try {
-      req.user = jwt.verify(token, JWT_SECRET) as AuthUser;
+      const payload = jwt.verify(token, JWT_SECRET) as AuthUser;
+      const user = await prisma.user.findUnique({
+        where: { id: payload.id },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          name: true,
+          suspended: true,
+        },
+      });
+      if (user && !user.suspended) {
+        req.user = {
+          id: user.id,
+          email: user.email,
+          role: user.role,
+          name: user.name,
+        };
+      }
     } catch {
       /* ignore */
     }
-  }
-  next();
+    next();
+  })();
 }
 
 export function requireRole(...roles: Role[]) {
@@ -74,12 +125,4 @@ export function requireRole(...roles: Role[]) {
     }
     next();
   };
-}
-
-export async function assertNotSuspended(userId: string) {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user || user.suspended) {
-    throw new Error("Account suspended");
-  }
-  return user;
 }

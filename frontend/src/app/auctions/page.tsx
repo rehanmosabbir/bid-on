@@ -1,72 +1,98 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useForm } from "react-hook-form";
 import { AuctionCard } from "@/components/AuctionCard";
-import { api, Auction } from "@/lib/api";
-import { Suspense } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAuctions, useCategories } from "@/hooks/queries";
 
 function AuctionsInner() {
   const params = useSearchParams();
-  const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [q, setQ] = useState(params.get("q") || "");
-  const [category, setCategory] = useState(params.get("category") || "");
-  const [categories, setCategories] = useState<
-    Array<{ id: string; name: string; slug: string }>
-  >([]);
-  const [loading, setLoading] = useState(true);
+  const [filters, setFilters] = useState({
+    q: params.get("q") || "",
+    category: params.get("category") || "",
+  });
 
-  useEffect(() => {
-    api<{ categories: Array<{ id: string; name: string; slug: string }> }>(
-      "/api/categories"
-    ).then((d) => setCategories(d.categories));
-  }, []);
+  const { register, handleSubmit, setValue, watch } = useForm({
+    defaultValues: filters,
+  });
 
-  useEffect(() => {
-    setLoading(true);
-    const qs = new URLSearchParams({ status: "live" });
-    if (q) qs.set("q", q);
-    if (category) qs.set("category", category);
-    api<{ auctions: Auction[] }>(`/api/auctions?${qs}`)
-      .then((d) => setAuctions(d.auctions))
-      .finally(() => setLoading(false));
-  }, [q, category]);
+  const category = watch("category");
+  const { data: catData } = useCategories();
+  const { data, isLoading } = useAuctions({
+    status: "live",
+    q: filters.q || undefined,
+    category: filters.category || undefined,
+  });
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-12">
-      <h1 className="font-[family-name:var(--font-display)] text-4xl">
+    <div className="mx-auto max-w-6xl px-4 py-14">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-primary">
+        Catalogue
+      </p>
+      <h1 className="mt-2 font-[family-name:var(--font-display)] text-5xl">
         Auctions
       </h1>
-      <p className="mt-2 text-[var(--muted)]">
+      <p className="mt-3 max-w-lg text-muted-foreground">
         Filter by keyword and category. Bids update in real time.
       </p>
-      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-        <input
-          className="field"
-          placeholder="Search…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <select
-          className="field sm:max-w-xs"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
+      <form
+        className="mt-8 flex flex-col gap-3 sm:flex-row"
+        onSubmit={handleSubmit((values) =>
+          setFilters({
+            q: values.q || "",
+            category: values.category || "",
+          })
+        )}
+      >
+        <Input placeholder="Search…" {...register("q")} />
+        <Select
+          value={category || "all"}
+          onValueChange={(value) =>
+            setValue("category", !value || value === "all" ? "" : value)
+          }
+          items={{
+            all: "All categories",
+            ...Object.fromEntries(
+              (catData?.categories || []).map((c) => [c.slug, c.name])
+            ),
+          }}
         >
-          <option value="">All categories</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.slug}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="mt-8 border-t border-[var(--line)]">
-        {loading ? (
-          <p className="py-10 text-[var(--muted)]">Loading…</p>
-        ) : auctions.length === 0 ? (
-          <p className="py-10 text-[var(--muted)]">No auctions found.</p>
+          <SelectTrigger className="w-full sm:max-w-xs">
+            <SelectValue placeholder="All categories" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All categories</SelectItem>
+            {(catData?.categories || []).map((c) => (
+              <SelectItem key={c.id} value={c.slug}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="submit"
+          className="bg-accent text-accent-foreground hover:bg-accent/90"
+        >
+          Apply
+        </Button>
+      </form>
+      <div className="mt-8 border-t border-border">
+        {isLoading ? (
+          <p className="py-10 text-muted-foreground">Loading…</p>
+        ) : (data?.auctions || []).length === 0 ? (
+          <p className="py-10 text-muted-foreground">No auctions found.</p>
         ) : (
-          auctions.map((a) => <AuctionCard key={a.id} auction={a} />)
+          data!.auctions.map((a) => <AuctionCard key={a.id} auction={a} />)
         )}
       </div>
     </div>
@@ -75,7 +101,7 @@ function AuctionsInner() {
 
 export default function AuctionsPage() {
   return (
-    <Suspense fallback={<p className="p-10">Loading…</p>}>
+    <Suspense fallback={<p className="p-10 text-muted-foreground">Loading…</p>}>
       <AuctionsInner />
     </Suspense>
   );

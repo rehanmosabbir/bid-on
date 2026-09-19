@@ -1,73 +1,149 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
-import { api, Auction, formatBdt } from "@/lib/api";
+import { useAuction, useCheckout } from "@/hooks/queries";
+import { api, formatBdt } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { toastError, toastFromError, toastInfo, toastSuccess } from "@/lib/toast";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { RequirePermission } from "@/components/RequirePermission";
 
 function CheckoutInner() {
   const { auctionId } = useParams<{ auctionId: string }>();
   const search = useSearchParams();
-  const { user } = useAuth();
-  const [auction, setAuction] = useState<Auction | null>(null);
-  const [message, setMessage] = useState(
-    search.get("success") ? "Payment successful." : ""
-  );
-  const [error, setError] = useState("");
+  const user = useAuth((s) => s.user);
+  const { data, isLoading, refetch } = useAuction(auctionId);
+  const checkout = useCheckout();
+  const successFlag = search.get("success") === "1";
+  const canceled = search.get("canceled") === "1";
+  const sessionId = search.get("session_id");
+  const [paid, setPaid] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
-    api<{ auction: Auction }>(`/api/auctions/${auctionId}`).then((d) =>
-      setAuction(d.auction)
-    );
-  }, [auctionId]);
+    if (canceled) toastError("Payment canceled");
+  }, [canceled]);
 
-  async function pay() {
-    setError("");
-    try {
-      const data = await api<{ url?: string; message?: string }>(
-        "/api/payments/create-checkout-session",
-        {
-          method: "POST",
-          body: JSON.stringify({ auctionId }),
+  useEffect(() => {
+    if (!successFlag) return;
+    let cancelled = false;
+
+    async function confirm() {
+      setConfirming(true);
+      try {
+        if (sessionId) {
+          const result = await api<{
+            status?: string;
+            payment_status?: string;
+          }>(
+            `/api/payments/session-status?session_id=${encodeURIComponent(sessionId)}`
+          );
+          if (
+            !cancelled &&
+            (result.status === "complete" || result.payment_status === "paid")
+          ) {
+            setPaid(true);
+            toastSuccess("Payment successful");
+            await refetch();
+            return;
+          }
         }
-      );
-      if (data.url) window.location.href = data.url;
-      else setMessage(data.message || "Paid");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment failed");
+        if (!cancelled) {
+          setPaid(true);
+          toastSuccess("Payment successful");
+          await refetch();
+        }
+      } catch (err) {
+        if (!cancelled) toastFromError(err, "Could not confirm payment");
+      } finally {
+        if (!cancelled) setConfirming(false);
+      }
     }
-  }
 
-  if (!auction) return <p className="p-10">Loading…</p>;
+    void confirm();
+    return () => {
+      cancelled = true;
+    };
+  }, [successFlag, sessionId, refetch]);
+
+  const auction = data?.auction;
+  const alreadySold = auction?.status === "sold";
+
+  if (isLoading || !auction) {
+    return <p className="p-10 text-muted-foreground">Loading…</p>;
+  }
 
   return (
     <div className="mx-auto max-w-lg px-4 py-16">
-      <h1 className="font-[family-name:var(--font-display)] text-4xl">Checkout</h1>
-      <div className="panel mt-8 space-y-3 p-6">
-        <p className="text-lg">{auction.title}</p>
-        <p className="text-[var(--muted)]">Amount due</p>
-        <p className="font-[family-name:var(--font-display)] text-3xl text-[var(--accent)]">
-          {formatBdt(auction.currentBid)}
-        </p>
-        {user?.id === auction.winner?.id ? (
-          <button className="btn btn-accent w-full" onClick={pay}>
-            Pay with Stripe
-          </button>
-        ) : (
-          <p className="text-sm text-red-700">Only the auction winner can pay.</p>
-        )}
-        {message && <p className="text-sm text-[var(--accent)]">{message}</p>}
-        {error && <p className="text-sm text-red-700">{error}</p>}
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="font-[family-name:var(--font-display)] text-4xl">
+            Checkout
+          </CardTitle>
+          <CardDescription>{auction.title}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-muted-foreground">Amount due</p>
+          <p className="font-[family-name:var(--font-display)] text-3xl text-accent">
+            {formatBdt(auction.currentBid)}
+          </p>
+          {canceled && (
+            <p className="text-sm text-destructive">
+              Checkout was canceled. You can try again.
+            </p>
+          )}
+          {(paid || alreadySold) && (
+            <p className="text-sm text-accent">
+              {confirming ? "Confirming payment…" : "Payment successful."}
+            </p>
+          )}
+          {user?.id === auction.winner?.id && !paid && !alreadySold ? (
+            <Button
+              className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+              disabled={checkout.isPending}
+              onClick={async () => {
+                try {
+                  const result = await checkout.mutateAsync(auctionId);
+                  if (result.url) {
+                    toastInfo("Redirecting to Stripe Checkout…");
+                    window.location.href = result.url;
+                  } else {
+                    toastSuccess(result.message || "Payment completed");
+                    setPaid(true);
+                    await refetch();
+                  }
+                } catch (err) {
+                  toastFromError(err, "Payment failed");
+                }
+              }}
+            >
+              {checkout.isPending ? "Processing…" : "Pay with Stripe (test)"}
+            </Button>
+          ) : user?.id !== auction.winner?.id ? (
+            <p className="text-sm text-destructive">
+              Only the auction winner can pay.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
 export default function CheckoutPage() {
   return (
-    <Suspense>
-      <CheckoutInner />
-    </Suspense>
+    <RequirePermission authOnly>
+      <Suspense>
+        <CheckoutInner />
+      </Suspense>
+    </RequirePermission>
   );
 }
