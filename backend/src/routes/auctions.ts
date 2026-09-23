@@ -160,6 +160,57 @@ router.post(
   })
 );
 
+router.patch(
+  "/:id",
+  requireAuth,
+  requirePermission("listing:create"),
+  asyncHandler(async (req, res) => {
+    const schema = z.object({
+      startPrice: z.coerce.number().positive().optional(),
+      durationMinutes: z.coerce.number().min(1).max(43200).optional(),
+    });
+    const data = schema.parse(req.body);
+    if (data.startPrice === undefined && data.durationMinutes === undefined) {
+      return res.status(400).json({ error: "Nothing to update" });
+    }
+
+    const auction = await prisma.auction.findUnique({
+      where: { id: param(req, "id") },
+      include: { _count: { select: { bids: true } } },
+    });
+    if (!auction) return res.status(404).json({ error: "Auction not found" });
+    if (auction.sellerId !== req.user!.id && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "You can only edit your own listings" });
+    }
+    if (!["pending", "live"].includes(auction.status)) {
+      return res.status(400).json({
+        error: "Only pending or live listings can be edited",
+      });
+    }
+    if (auction._count.bids > 0 || Number(auction.currentBid) > 0) {
+      return res.status(400).json({
+        error: "Cannot change price or duration after bids have been placed",
+      });
+    }
+
+    const update: Prisma.AuctionUpdateInput = {};
+    if (data.startPrice !== undefined) {
+      update.startPrice = data.startPrice;
+    }
+    if (data.durationMinutes !== undefined) {
+      update.endsAt = new Date(Date.now() + data.durationMinutes * 60 * 1000);
+    }
+
+    const updated = await prisma.auction.update({
+      where: { id: auction.id },
+      data: update,
+      include: auctionInclude(),
+    });
+
+    res.json({ auction: updated, message: "Listing updated" });
+  })
+);
+
 router.post(
   "/:id/approve",
   requireAuth,

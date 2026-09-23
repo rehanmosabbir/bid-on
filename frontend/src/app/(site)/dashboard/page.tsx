@@ -76,7 +76,13 @@ function DashboardInner() {
                         {a.status}
                       </Badge>
                     </span>
-                    <span>{formatBdt(a.currentBid || a.startPrice)}</span>
+                    <span>
+                      {formatBdt(
+                        Number(a.currentBid) > 0
+                          ? a.currentBid
+                          : a.startPrice
+                      )}
+                    </span>
                   </Link>
                 ))}
                 {(listingsQ.data?.auctions || []).length === 0 && (

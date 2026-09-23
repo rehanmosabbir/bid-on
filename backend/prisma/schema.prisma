@@ -46,6 +46,8 @@ model User {
   verified     Boolean  @default(false)
   otpCode      String?
   otpExpiresAt DateTime?
+  resetOtpCode      String?
+  resetOtpExpiresAt DateTime?
   phone        String?
   address      String?
   suspended    Boolean  @default(false)

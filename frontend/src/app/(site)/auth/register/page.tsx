@@ -53,10 +53,17 @@ export default function RegisterPage() {
     async (values) => {
       try {
         const data = await registerMutation.mutateAsync(values);
-        toastSuccess("Account created — check your email for the OTP");
-        const qs = new URLSearchParams({ email: data.email });
-        if (data.devOtp) qs.set("otp", data.devOtp);
-        router.push(`/auth/verify?${qs}`);
+        toastSuccess(
+          data.verifyUrl
+            ? "Account created — open the verification link on the next screen"
+            : "Account created — check your email for a verification link"
+        );
+        if (data.verifyUrl && typeof window !== "undefined") {
+          sessionStorage.setItem("bidon-verify-url", data.verifyUrl);
+        }
+        router.push(
+          `/auth/verify?email=${encodeURIComponent(data.email)}`
+        );
       } catch (err) {
         toastFromError(err, "Registration failed");
       }

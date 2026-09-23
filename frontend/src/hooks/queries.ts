@@ -146,6 +146,23 @@ export function useCreateAuction() {
   });
 }
 
+export function useUpdateAuction(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { startPrice: number; durationMinutes: number }) =>
+      api<{ auction: Auction }>(`/api/auctions/${id}`, {
+        method: "PATCH",
+        data,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.auction(id) });
+      qc.invalidateQueries({ queryKey: queryKeys.meListings });
+      qc.invalidateQueries({ queryKey: ["auctions"] });
+      qc.invalidateQueries({ queryKey: ["admin"] });
+    },
+  });
+}
+
 export function useUpdateProfile() {
   return useMutation({
     mutationFn: (data: {
@@ -286,7 +303,7 @@ export function useRegister() {
       password: string;
       role: string;
     }) =>
-      api<{ email: string; devOtp?: string }>("/api/auth/register", {
+      api<{ email: string; verifyUrl?: string }>("/api/auth/register", {
         method: "POST",
         data: data,
       }),
@@ -295,7 +312,7 @@ export function useRegister() {
 
 export function useVerifyOtp() {
   return useMutation({
-    mutationFn: (data: { email: string; otp: string }) =>
+    mutationFn: (data: { token: string }) =>
       api<{ token: string; user: User }>("/api/auth/verify", {
         method: "POST",
         data: data,
@@ -306,9 +323,32 @@ export function useVerifyOtp() {
 export function useResendOtp() {
   return useMutation({
     mutationFn: (email: string) =>
-      api<{ devOtp?: string }>("/api/auth/resend-otp", {
+      api<{ verifyUrl?: string; message: string }>("/api/auth/resend-otp", {
         method: "POST",
         data: { email },
+      }),
+  });
+}
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: (email: string) =>
+      api<{ message: string; email: string; devOtp?: string }>(
+        "/api/auth/forgot-password",
+        {
+          method: "POST",
+          data: { email },
+        }
+      ),
+  });
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: (data: { email: string; otp: string; password: string }) =>
+      api<{ message: string }>("/api/auth/reset-password", {
+        method: "POST",
+        data,
       }),
   });
 }

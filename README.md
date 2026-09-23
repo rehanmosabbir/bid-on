@@ -10,7 +10,7 @@ Full-stack e-auction platform (**Next.js** + **Express** + **PostgreSQL**) with 
 | Backend | Express, Prisma, Socket.IO |
 | Database | PostgreSQL |
 | Payments | Stripe Checkout (test) or local sim if no key |
-| Auth | JWT + email OTP verification |
+| Auth | JWT + email verification link |
 
 ## Frontend libraries
 
@@ -59,7 +59,8 @@ npm run dev            # http://localhost:3000
 
 ## Features
 
-- Register / login with email OTP (OTP logged to console when SMTP is unset)
+- Register / login with email verification link (link logged to console when SMTP fails)
+- Forgot password via email OTP (`/auth/forgot` → `/auth/reset`)
 - Seller listings with image upload → **admin approval**
 - Live auctions with countdown + Socket.IO bid updates
 - Watchlist, dashboard (bids / listings / transactions)
@@ -122,7 +123,10 @@ Declined: `4000 0000 0000 9995`
 - `STRIPE_SECRET_KEY` — test/sandbox secret (empty = simulate)
 - `STRIPE_WEBHOOK_SECRET` — from `stripe listen` or Dashboard
 - `STRIPE_CURRENCY` — `usd` for sandboxes; `bdt` when enabled
-- `SMTP_*` — optional; without SMTP, emails print to the API console
+- `RESEND_API_KEY` — preferred email delivery over HTTPS ([Resend](https://resend.com)). Use when Gmail SMTP is blocked. Free test: `RESEND_FROM="Bid On <onboarding@resend.dev>"` and send only to the email on your Resend account.
+- `SMTP_*` — optional Gmail/SMTP fallback; many ISPs block ports 587/465.
+- Without Resend or working SMTP, verification links print to the API console / are returned for local/dev.
+- Forgot password: `/auth/forgot` → OTP email → `/auth/reset`
 
 **Frontend** (`frontend/.env.local`):
 

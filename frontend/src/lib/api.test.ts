@@ -78,12 +78,12 @@ describe("zod schemas", () => {
     expect(bidSchema.safeParse({ amount: 100 }).success).toBe(true);
   });
 
-  it("requires 6-digit otp", () => {
-    expect(verifySchema.safeParse({ email: "a@b.com", otp: "123" }).success).toBe(
-      false
-    );
+  it("requires a verification token", () => {
+    expect(verifySchema.safeParse({ token: "short" }).success).toBe(false);
     expect(
-      verifySchema.safeParse({ email: "a@b.com", otp: "123456" }).success
+      verifySchema.safeParse({
+        token: "a".repeat(64),
+      }).success
     ).toBe(true);
   });
 });

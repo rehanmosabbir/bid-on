@@ -1,15 +1,31 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth, signToken } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
-import { otpEmailHtml, sendEmail } from "../lib/email";
+import { resetOtpEmailHtml, sendEmail, verifyEmailHtml } from "../lib/email";
 
 const router = Router();
 
 function generateOtp() {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function generateVerifyToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+function frontendUrl() {
+  return (process.env.FRONTEND_URL || "http://localhost:3000").replace(
+    /\/$/,
+    ""
+  );
+}
+
+function buildVerifyUrl(token: string) {
+  return `${frontendUrl()}/auth/verify?token=${encodeURIComponent(token)}`;
 }
 
 const registerSchema = z.object({
@@ -27,12 +43,14 @@ router.post(
   "/register",
   asyncHandler(async (req, res) => {
     const data = registerSchema.parse(req.body);
-    const existing = await prisma.user.findUnique({ where: { email: data.email.toLowerCase() } });
+    const existing = await prisma.user.findUnique({
+      where: { email: data.email.toLowerCase() },
+    });
     if (existing) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
-    const otp = generateOtp();
+    const verifyToken = generateVerifyToken();
     const passwordHash = await bcrypt.hash(data.password, 12);
     const user = await prisma.user.create({
       data: {
@@ -40,18 +58,24 @@ router.post(
         email: data.email.toLowerCase(),
         passwordHash,
         role: data.role,
-        otpCode: otp,
-        otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        otpCode: verifyToken,
+        otpExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
-    await sendEmail(user.email, "Verify your Bid On account", otpEmailHtml(otp));
+    const verifyUrl = buildVerifyUrl(verifyToken);
+    const sent = await sendEmail(
+      user.email,
+      "Verify your Bid On account",
+      verifyEmailHtml(verifyUrl)
+    );
 
     res.status(201).json({
-      message: "Registered. Check email for OTP.",
+      message: sent.delivered
+        ? "Registered. Check your email for a verification link."
+        : "Registered. Check the API console for the verification link (email could not be sent).",
       email: user.email,
-      // Dev convenience when SMTP is not configured
-      ...(process.env.SMTP_HOST ? {} : { devOtp: otp }),
+      ...(!sent.delivered ? { verifyUrl } : {}),
     });
   })
 );
@@ -60,16 +84,20 @@ router.post(
   "/verify",
   asyncHandler(async (req, res) => {
     const schema = z.object({
-      email: z.string().email(),
-      otp: z.string().length(6),
+      token: z.string().min(32),
     });
-    const { email, otp } = schema.parse(req.body);
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
-    if (!user || !user.otpCode || user.otpCode !== otp) {
-      return res.status(400).json({ error: "Invalid OTP" });
+    const { token } = schema.parse(req.body);
+    const user = await prisma.user.findFirst({
+      where: { otpCode: token },
+    });
+    if (!user) {
+      return res.status(400).json({ error: "Invalid or expired verification link" });
+    }
+    if (user.verified) {
+      return res.status(400).json({ error: "Email already verified" });
     }
     if (user.otpExpiresAt && user.otpExpiresAt < new Date()) {
-      return res.status(400).json({ error: "OTP expired" });
+      return res.status(400).json({ error: "Verification link expired" });
     }
 
     const updated = await prisma.user.update({
@@ -77,14 +105,14 @@ router.post(
       data: { verified: true, otpCode: null, otpExpiresAt: null },
     });
 
-    const token = signToken({
+    const jwt = signToken({
       id: updated.id,
       email: updated.email,
       role: updated.role,
       name: updated.name,
     });
 
-    res.cookie("token", token, {
+    res.cookie("token", jwt, {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
@@ -92,7 +120,7 @@ router.post(
     });
 
     res.json({
-      token,
+      token: jwt,
       user: {
         id: updated.id,
         name: updated.name,
@@ -108,19 +136,31 @@ router.post(
   "/resend-otp",
   asyncHandler(async (req, res) => {
     const email = z.string().email().parse(req.body.email);
-    const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
     if (!user) return res.status(404).json({ error: "User not found" });
     if (user.verified) return res.json({ message: "Already verified" });
 
-    const otp = generateOtp();
+    const verifyToken = generateVerifyToken();
     await prisma.user.update({
       where: { id: user.id },
-      data: { otpCode: otp, otpExpiresAt: new Date(Date.now() + 10 * 60 * 1000) },
+      data: {
+        otpCode: verifyToken,
+        otpExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
     });
-    await sendEmail(user.email, "Your Bid On OTP", otpEmailHtml(otp));
+    const verifyUrl = buildVerifyUrl(verifyToken);
+    const sent = await sendEmail(
+      user.email,
+      "Verify your Bid On account",
+      verifyEmailHtml(verifyUrl)
+    );
     res.json({
-      message: "OTP resent",
-      ...(process.env.SMTP_HOST ? {} : { devOtp: otp }),
+      message: sent.delivered
+        ? "Verification email resent"
+        : "Verification link generated — check the API console (email could not be sent).",
+      ...(!sent.delivered ? { verifyUrl } : {}),
     });
   })
 );
@@ -179,6 +219,78 @@ router.post("/logout", (_req, res) => {
   res.clearCookie("token");
   res.json({ message: "Logged out" });
 });
+
+const passwordRules = z
+  .string()
+  .min(8)
+  .regex(/[A-Z]/, "Must include uppercase")
+  .regex(/[0-9]/, "Must include a number");
+
+router.post(
+  "/forgot-password",
+  asyncHandler(async (req, res) => {
+    const email = z.string().email().parse(req.body.email).toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    let devOtp: string | undefined;
+    if (user) {
+      const otp = generateOtp();
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          resetOtpCode: otp,
+          resetOtpExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        },
+      });
+      const sent = await sendEmail(
+        user.email,
+        "Reset your Bid On password",
+        resetOtpEmailHtml(otp)
+      );
+      if (!sent.delivered) devOtp = otp;
+    }
+
+    res.json({
+      message:
+        "If an account exists for that email, a reset code has been sent.",
+      email,
+      ...(devOtp ? { devOtp } : {}),
+    });
+  })
+);
+
+router.post(
+  "/reset-password",
+  asyncHandler(async (req, res) => {
+    const schema = z.object({
+      email: z.string().email(),
+      otp: z.string().length(6),
+      password: passwordRules,
+    });
+    const { email, otp, password } = schema.parse(req.body);
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+    });
+    if (!user || !user.resetOtpCode || user.resetOtpCode !== otp) {
+      return res.status(400).json({ error: "Invalid or expired reset code" });
+    }
+    if (user.resetOtpExpiresAt && user.resetOtpExpiresAt < new Date()) {
+      return res.status(400).json({ error: "Reset code expired" });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetOtpCode: null,
+        resetOtpExpiresAt: null,
+      },
+    });
+
+    res.json({ message: "Password updated. You can log in now." });
+  })
+);
 
 router.get(
   "/me",

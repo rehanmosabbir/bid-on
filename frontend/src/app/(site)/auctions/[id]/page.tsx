@@ -30,6 +30,7 @@ import { useAuth } from "@/lib/auth";
 import { useSocket } from "@/lib/socket";
 import { bidSchema, BidValues, reviewSchema, ReviewValues } from "@/lib/schemas";
 import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
+import { SellerEditPanel } from "@/components/SellerEditPanel";
 
 export default function AuctionDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -99,6 +100,13 @@ export default function AuctionDetailPage() {
   const isWinner = Boolean(user && auction.winner?.id === user.id);
   const canPay = Boolean(isWinner && isEnded && auction.status !== "sold");
   const alreadyPaid = auction.status === "sold" && isWinner;
+  const isOwner = Boolean(user && auction.seller?.id === user.id);
+  const canEditListing =
+    isOwner &&
+    ["pending", "live"].includes(auction.status) &&
+    Number(auction.currentBid) === 0 &&
+    (auction.bids?.length ?? 0) === 0 &&
+    auction.bidCount === 0;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 lg:grid-cols-[1.2fr_0.8fr]">
@@ -158,7 +166,9 @@ export default function AuctionDetailPage() {
           </p>
         </div>
         <CardContent className="space-y-3 p-6">
-          {auction.status === "live" && user ? (
+          {canEditListing && <SellerEditPanel auction={auction} />}
+
+          {auction.status === "live" && user && !isOwner ? (
             <form
               onSubmit={bidForm.handleSubmit(
                 async (values) => {
@@ -201,10 +211,15 @@ export default function AuctionDetailPage() {
                 {placeBid.isPending ? "Placing…" : "Place bid"}
               </Button>
             </form>
-          ) : auction.status === "live" ? (
+          ) : auction.status === "live" && !user ? (
             <Link href="/auth/login">
               <Button className="w-full">Log in to bid</Button>
             </Link>
+          ) : auction.status === "live" && isOwner ? (
+            <p className="text-sm text-muted-foreground">
+              This is your listing. Bidders will use the panel above once you
+              finish editing.
+            </p>
           ) : null}
 
           {isEnded && (
