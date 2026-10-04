@@ -3,6 +3,7 @@ import Stripe from "stripe";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
+import { getFrontendOrigin } from "../lib/corsOrigins";
 
 const router = Router();
 
@@ -60,7 +61,7 @@ router.post(
         mode: "dev",
         message: "Payment simulated (no Stripe key configured)",
         transaction: txn,
-        url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?success=1`,
+        url: `${getFrontendOrigin()}/checkout/${auctionId}?success=1`,
       });
     }
 
@@ -95,8 +96,8 @@ router.post(
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: req.user!.email,
-      success_url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?success=1&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL}/checkout/${auctionId}?canceled=1`,
+      success_url: `${getFrontendOrigin()}/checkout/${auctionId}?success=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getFrontendOrigin()}/checkout/${auctionId}?canceled=1`,
       line_items: [
         {
           quantity: 1,

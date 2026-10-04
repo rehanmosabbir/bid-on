@@ -1,12 +1,13 @@
 import { Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
+import { getCorsOrigins } from "./lib/corsOrigins";
 
 let io: Server | null = null;
 
 export function initSocket(httpServer: HttpServer) {
   io = new Server(httpServer, {
     cors: {
-      origin: process.env.FRONTEND_URL || "http://localhost:3000",
+      origin: getCorsOrigins(),
       credentials: true,
     },
   });

@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { authCookieOptions, requireAuth, signToken } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { resetOtpEmailHtml, sendEmail, verifyEmailHtml } from "../lib/email";
+import { getFrontendOrigin } from "../lib/corsOrigins";
 
 const router = Router();
 
@@ -18,10 +19,7 @@ function generateVerifyToken() {
 }
 
 function frontendUrl() {
-  return (process.env.FRONTEND_URL || "http://localhost:3000").replace(
-    /\/$/,
-    ""
-  );
+  return getFrontendOrigin();
 }
 
 function buildVerifyUrl(token: string) {

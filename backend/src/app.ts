@@ -14,9 +14,11 @@ import paymentRoutes, { handleStripeWebhook } from "./routes/payments";
 import adminRoutes from "./routes/admin";
 import { errorHandler } from "./lib/asyncHandler";
 import { mountSwagger } from "./docs/swagger";
+import { getCorsOrigins } from "./lib/corsOrigins";
 
 export function createApp() {
   const app = express();
+  const corsOrigins = getCorsOrigins();
 
   app.post(
     "/api/payments/webhook",
@@ -35,7 +37,7 @@ export function createApp() {
 
   app.use(
     cors({
-      origin: process.env.FRONTEND_URL || "http://localhost:3000",
+      origin: corsOrigins.length === 1 ? corsOrigins[0] : corsOrigins,
       credentials: true,
     })
   );
