@@ -19,14 +19,7 @@ const transporter = hasSmtp
       host: process.env.SMTP_HOST,
       port: smtpPort,
       secure: smtpSecure,
-      family: 4,
-      lookup: (hostname, options, callback) => {
-        const opts =
-          typeof options === "object" && options
-            ? { ...options, family: 4, all: false }
-            : { family: 4 };
-        dns.lookup(hostname, opts as dns.LookupOneOptions, callback as never);
-      },
+      // IPv4 preference comes from dns.setDefaultResultOrder above
       connectionTimeout: 12_000,
       greetingTimeout: 12_000,
       socketTimeout: 20_000,

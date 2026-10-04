@@ -27,9 +27,10 @@ Wire the two apps together:
 ## 1. Deploy the backend on Railway
 
 1. Create a new Railway project → **Deploy from GitHub** → select this repo.
-2. Open the service → **Settings**:
-   - **Root Directory:** `backend`
-   - **Config file** (if prompted): `/backend/railway.toml`
+2. Open the **API service** → **Settings** (required for this monorepo):
+   - **Root Directory:** `/backend` (not `/` — if left empty, Railpack fails looking for Nx/Next at the repo root)
+   - **Config-as-code path:** `/backend/railway.toml`
+   - Save, then **Redeploy**
 3. Confirm build/start (from [`backend/railway.toml`](../backend/railway.toml)):
    - Build: `npm run build`
    - Start: `npm start` (runs `prisma migrate deploy` then `node dist/index.js`)
@@ -91,6 +92,20 @@ Subscribe to Checkout session events you already handle, copy the signing secret
 ## Order of operations tip
 
 If you deploy the API before the frontend exists, set a temporary `FRONTEND_URL` (or update it right after the first Vercel deploy). CORS and Socket.IO both read `FRONTEND_URL` at runtime.
+
+## Troubleshooting
+
+### `Railpack failed… Detected an Nx workspace with a Next.js app`
+
+This is **not** an Nx repo. Railway is building from the **repository root** instead of `backend/`.
+
+**Fix:** Service → **Settings** → **Root Directory** = `/backend`, config file = `/backend/railway.toml` → Redeploy.
+
+You do **not** need `RAILPACK_NX_APP` for Bid On.
+
+### Build succeeds but CORS / Socket.IO fail
+
+`FRONTEND_URL` on Railway must exactly match the Vercel origin (scheme + host, no trailing slash), then redeploy the API.
 
 ## Custom domains (optional)
 
