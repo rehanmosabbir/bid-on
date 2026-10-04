@@ -55,6 +55,7 @@ Wire the two apps together:
 
 7. Generate a public HTTPS domain for the service (**Settings → Networking → Generate Domain**).
 8. Deploy and open `https://<railway-host>/api/health` — expect `{ "ok": true, "service": "bid-on" }`.
+9. API docs (Swagger): `https://<railway-host>/api/docs`
 9. Optional demo data (once): open Railway shell for the service and run `npm run db:seed`.
 
 ### Stripe webhooks (if using Stripe)

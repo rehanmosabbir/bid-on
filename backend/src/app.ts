@@ -13,6 +13,7 @@ import reviewRoutes from "./routes/reviews";
 import paymentRoutes, { handleStripeWebhook } from "./routes/payments";
 import adminRoutes from "./routes/admin";
 import { errorHandler } from "./lib/asyncHandler";
+import { mountSwagger } from "./docs/swagger";
 
 export function createApp() {
   const app = express();
@@ -41,6 +42,8 @@ export function createApp() {
   app.use(express.json());
   app.use(cookieParser());
   app.use("/uploads", express.static(path.resolve(process.env.UPLOAD_DIR || "uploads")));
+
+  mountSwagger(app);
 
   app.get("/api/health", (_req, res) => res.json({ ok: true, service: "bid-on" }));
 
