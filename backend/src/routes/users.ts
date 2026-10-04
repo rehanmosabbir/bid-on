@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth, signToken } from "../lib/auth";
+import { authCookieOptions, requireAuth, signToken } from "../lib/auth";
 import { hasPermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 
@@ -61,11 +61,7 @@ router.patch(
         role: user.role,
         name: user.name,
       });
-      res.cookie("token", token, {
-        httpOnly: true,
-        sameSite: "lax",
-        secure: process.env.NODE_ENV === "production",
-      });
+      res.cookie("token", token, authCookieOptions());
       return res.json({ user, token });
     }
 

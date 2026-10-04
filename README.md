@@ -131,3 +131,11 @@ Declined: `4000 0000 0000 9995`
 **Frontend** (`frontend/.env.local`):
 
 - `NEXT_PUBLIC_API_URL=http://localhost:4000`
+
+## Deploy (Vercel + Railway)
+
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for production deploy:
+
+- Frontend → Vercel (`frontend/` root)
+- Backend + Postgres + uploads volume → Railway (`backend/` root)
+- Env pairing: `NEXT_PUBLIC_API_URL` ↔ `FRONTEND_URL`

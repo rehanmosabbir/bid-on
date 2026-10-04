@@ -1,5 +1,5 @@
 import { Role } from "@prisma/client";
-import { Request, Response, NextFunction } from "express";
+import { CookieOptions, Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { prisma } from "./prisma";
 
@@ -9,6 +9,17 @@ export type AuthUser = {
   role: Role;
   name: string;
 };
+
+/** Cookie options for JWT — cross-origin safe in production (Vercel ↔ Railway). */
+export function authCookieOptions(): CookieOptions {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    sameSite: isProd ? "none" : "lax",
+    secure: isProd,
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  };
+}
 
 declare global {
   namespace Express {

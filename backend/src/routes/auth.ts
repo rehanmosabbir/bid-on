@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { requireAuth, signToken } from "../lib/auth";
+import { authCookieOptions, requireAuth, signToken } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { resetOtpEmailHtml, sendEmail, verifyEmailHtml } from "../lib/email";
 
@@ -112,12 +112,7 @@ router.post(
       name: updated.name,
     });
 
-    res.cookie("token", jwt, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie("token", jwt, authCookieOptions());
 
     res.json({
       token: jwt,
@@ -194,12 +189,7 @@ router.post(
       name: user.name,
     });
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie("token", token, authCookieOptions());
 
     res.json({
       token,
@@ -216,7 +206,8 @@ router.post(
 );
 
 router.post("/logout", (_req, res) => {
-  res.clearCookie("token");
+  const { maxAge: _maxAge, ...clearOpts } = authCookieOptions();
+  res.clearCookie("token", clearOpts);
   res.json({ message: "Logged out" });
 });
 
