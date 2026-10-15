@@ -64,6 +64,12 @@ function SellInner() {
 
   const categoryId = watch("categoryId");
 
+  useEffect(() => {
+    if (catData?.categories?.[0]?.id) {
+      setValue("categoryId", catData.categories[0].id);
+    }
+  }, [catData, setValue]);
+
   if (needsVerification(user)) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-12">
@@ -76,12 +82,6 @@ function SellInner() {
       </div>
     );
   }
-
-  useEffect(() => {
-    if (catData?.categories?.[0]?.id) {
-      setValue("categoryId", catData.categories[0].id);
-    }
-  }, [catData, setValue]);
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-12">
