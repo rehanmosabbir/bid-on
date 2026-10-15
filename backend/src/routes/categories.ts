@@ -10,11 +10,26 @@ const router = Router();
 router.get(
   "/",
   asyncHandler(async (_req, res) => {
-    const categories = await prisma.category.findMany({
-      include: { children: true, _count: { select: { auctions: true } } },
-      orderBy: { name: "asc" },
+    const [categories, liveGroups] = await Promise.all([
+      prisma.category.findMany({
+        include: { children: true, _count: { select: { auctions: true } } },
+        orderBy: { name: "asc" },
+      }),
+      prisma.auction.groupBy({
+        by: ["categoryId"],
+        where: { status: "live" },
+        _count: { _all: true },
+      }),
+    ]);
+    const liveByCategory = new Map(
+      liveGroups.map((group) => [group.categoryId, group._count._all])
+    );
+    res.json({
+      categories: categories.map((category) => ({
+        ...category,
+        liveCount: liveByCategory.get(category.id) ?? 0,
+      })),
     });
-    res.json({ categories });
   })
 );
 

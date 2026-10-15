@@ -11,4 +11,10 @@ describe("backend permissions", () => {
   it("keeps admin without account:switch_role", () => {
     expect(ROLE_PERMISSIONS.admin).not.toContain("account:switch_role");
   });
+
+  it("does not let admins place bids", () => {
+    expect(hasPermission("admin", "bid:place")).toBe(false);
+    expect(hasPermission("buyer", "bid:place")).toBe(true);
+    expect(hasPermission("seller", "bid:place")).toBe(true);
+  });
 });

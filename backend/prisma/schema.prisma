@@ -28,6 +28,13 @@ enum TransactionStatus {
   refunded
 }
 
+enum VerificationStatus {
+  none
+  pending
+  approved
+  rejected
+}
+
 enum NotificationType {
   outbid
   ending_soon
@@ -53,6 +60,23 @@ model User {
   suspended    Boolean  @default(false)
   ratingAvg    Float    @default(0)
   ratingCount  Int      @default(0)
+  kycStatus          VerificationStatus @default(none)
+  kycFullName        String?
+  kycDocumentType    String?
+  kycDocumentNumber  String?
+  kycDocumentUrl     String?
+  kycSubmittedAt     DateTime?
+  kycReviewedAt      DateTime?
+  kycRejectReason    String?
+  bankStatus         VerificationStatus @default(none)
+  bankAccountName    String?
+  bankName           String?
+  bankAccountNumber  String?
+  bankBranch         String?
+  bankRoutingNumber  String?
+  bankSubmittedAt    DateTime?
+  bankReviewedAt     DateTime?
+  bankRejectReason   String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -89,8 +113,9 @@ model Auction {
   startPrice   Decimal       @db.Decimal(12, 2)
   reservePrice Decimal?      @db.Decimal(12, 2)
   maxPriceCap  Decimal?      @db.Decimal(12, 2)
-  currentBid   Decimal       @default(0) @db.Decimal(12, 2)
-  bidCount     Int           @default(0)
+  currentBid      Decimal       @default(0) @db.Decimal(12, 2)
+  minBidIncrement Decimal       @default(1) @db.Decimal(12, 2)
+  bidCount        Int           @default(0)
   status       AuctionStatus @default(pending)
   startsAt     DateTime?
   endsAt       DateTime

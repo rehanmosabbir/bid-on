@@ -6,10 +6,11 @@ import {
   ClipboardCheck,
   Gavel,
   LayoutDashboard,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAdminAuctions } from "@/hooks/queries";
+import { useAdminAuctions, useAdminVerifications } from "@/hooks/queries";
 
 const navItems: {
   href: string;
@@ -20,6 +21,7 @@ const navItems: {
   { href: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/admin/approvals", label: "Approvals", icon: ClipboardCheck },
   { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/verifications", label: "Verification", icon: ShieldCheck },
   { href: "/admin/auctions", label: "Auctions", icon: Gavel },
 ];
 
@@ -27,6 +29,8 @@ export function AdminSidebar() {
   const pathname = usePathname();
   const pendingQ = useAdminAuctions("pending", true);
   const pendingCount = pendingQ.data?.auctions?.length ?? 0;
+  const verifyQ = useAdminVerifications({ queue: "pending" }, true);
+  const verifyCount = verifyQ.data?.users?.length ?? 0;
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-muted/40">
@@ -42,8 +46,13 @@ export function AdminSidebar() {
             ? pathname === item.href
             : pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
-          const showBadge =
-            item.href === "/admin/approvals" && pendingCount > 0;
+          const badgeCount =
+            item.href === "/admin/approvals"
+              ? pendingCount
+              : item.href === "/admin/verifications"
+                ? verifyCount
+                : 0;
+          const showBadge = badgeCount > 0;
 
           return (
             <Link
@@ -60,7 +69,7 @@ export function AdminSidebar() {
               <span className="flex-1">{item.label}</span>
               {showBadge ? (
                 <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
-                  {pendingCount}
+                  {badgeCount}
                 </span>
               ) : null}
             </Link>

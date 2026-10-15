@@ -9,6 +9,10 @@ import {
 } from "@/hooks/queries";
 import { formatBdt, mediaUrl } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  needsVerification,
+  VerificationRequired,
+} from "@/components/VerificationRequired";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -35,6 +39,11 @@ function DashboardInner() {
       <p className="mt-2 text-muted-foreground">
         Welcome, {user.name} · {user.role}
       </p>
+      {needsVerification(user) ? (
+        <div className="mt-6">
+          <VerificationRequired action="bidding or creating a listing" />
+        </div>
+      ) : null}
 
       <Tabs defaultValue="bids" className="mt-8">
         <TabsList>
@@ -65,25 +74,37 @@ function DashboardInner() {
             {canList && (
               <TabsContent value="listings" className="mt-0">
                 {(listingsQ.data?.auctions || []).map((a) => (
-                  <Link
+                  <div
                     key={a.id}
-                    href={`/auctions/${a.id}`}
-                    className="flex items-center justify-between gap-4 p-4 hover:bg-muted/50"
+                    className="flex items-center justify-between gap-4 p-4"
                   >
-                    <span className="flex items-center gap-2">
+                    <Link
+                      href={`/auctions/${a.id}`}
+                      className="flex items-center gap-2 hover:underline"
+                    >
                       {a.title}
                       <Badge variant="secondary" className="uppercase">
                         {a.status}
                       </Badge>
+                    </Link>
+                    <span className="flex items-center gap-3">
+                      {a.status === "pending" ? (
+                        <Link
+                          href={`/sell/${a.id}/edit`}
+                          className="text-sm text-primary hover:underline"
+                        >
+                          Edit
+                        </Link>
+                      ) : null}
+                      <span>
+                        {formatBdt(
+                          Number(a.currentBid) > 0
+                            ? a.currentBid
+                            : a.startPrice
+                        )}
+                      </span>
                     </span>
-                    <span>
-                      {formatBdt(
-                        Number(a.currentBid) > 0
-                          ? a.currentBid
-                          : a.startPrice
-                      )}
-                    </span>
-                  </Link>
+                  </div>
                 ))}
                 {(listingsQ.data?.auctions || []).length === 0 && (
                   <p className="p-4 text-muted-foreground">No listings yet.</p>

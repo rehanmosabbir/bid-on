@@ -368,6 +368,8 @@ export const openApiDocument = {
                   startPrice: { type: "number" },
                   reservePrice: { type: "number" },
                   maxPriceCap: { type: "number" },
+                  minBidIncrement: { type: "number" },
+                  durationMinutes: { type: "number" },
                   categoryId: { type: "string" },
                   startsAt: { type: "string", format: "date-time" },
                   endsAt: { type: "string", format: "date-time" },

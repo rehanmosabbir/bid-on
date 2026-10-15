@@ -22,7 +22,6 @@ export const ROLE_PERMISSIONS: Record<AppRole, readonly Permission[]> = {
     "admin:users",
     "admin:reports",
     "category:create",
-    "bid:place",
     "watchlist:manage",
   ],
   seller: [

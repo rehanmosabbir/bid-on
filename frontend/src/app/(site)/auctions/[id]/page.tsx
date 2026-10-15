@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
+import { AuctionGallery } from "@/components/AuctionGallery";
 import { Countdown } from "@/components/Countdown";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,12 +22,18 @@ import {
 import {
   queryKeys,
   useAuction,
+  useCloseAuction,
   usePlaceBid,
   useSubmitReview,
   useToggleWatchlist,
 } from "@/hooks/queries";
-import { formatBdt, mediaUrl } from "@/lib/api";
+import { formatBdt } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
+import {
+  needsVerification,
+  VerificationRequired,
+} from "@/components/VerificationRequired";
 import { useSocket } from "@/lib/socket";
 import { bidSchema, BidValues, reviewSchema, ReviewValues } from "@/lib/schemas";
 import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
@@ -34,13 +41,16 @@ import { SellerEditPanel } from "@/components/SellerEditPanel";
 
 export default function AuctionDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const { user } = useAuth();
   const socket = useSocket();
   const qc = useQueryClient();
   const { data, isLoading, error, refetch } = useAuction(id);
   const placeBid = usePlaceBid(id);
+  const closeAuction = useCloseAuction(id);
   const toggleWatch = useToggleWatchlist(id);
   const submitReview = useSubmitReview();
+  const [confirmClose, setConfirmClose] = useState(false);
 
   const auction = data?.auction;
   const watching = data?.watching ?? false;
@@ -56,12 +66,13 @@ export default function AuctionDetailPage() {
 
   useEffect(() => {
     if (!auction) return;
-    const min =
+    const increment = Math.max(1, Number(auction.minBidIncrement) || 1);
+    const leading =
       Number(auction.currentBid) > 0
-        ? Number(auction.currentBid) + 1
+        ? Number(auction.currentBid)
         : Number(auction.startPrice);
-    bidForm.reset({ amount: min });
-  }, [auction?.id, auction?.currentBid, auction?.startPrice]);
+    bidForm.reset({ amount: leading + increment });
+  }, [auction?.id, auction?.currentBid, auction?.startPrice, auction?.minBidIncrement]);
 
   useEffect(() => {
     if (!socket || !id) return;
@@ -95,30 +106,35 @@ export default function AuctionDetailPage() {
     );
   }
 
-  const image = mediaUrl(auction.images[0]);
+  const increment = Math.max(1, Number(auction.minBidIncrement) || 1);
+  const leadingPrice =
+    Number(auction.currentBid) > 0
+      ? Number(auction.currentBid)
+      : Number(auction.startPrice);
+  const minBid = leadingPrice + increment;
   const isEnded = ["ended", "sold"].includes(auction.status);
   const isWinner = Boolean(user && auction.winner?.id === user.id);
   const canPay = Boolean(isWinner && isEnded && auction.status !== "sold");
   const alreadyPaid = auction.status === "sold" && isWinner;
   const isOwner = Boolean(user && auction.seller?.id === user.id);
-  const canEditListing =
+  const canEditLive =
     isOwner &&
-    ["pending", "live"].includes(auction.status) &&
+    auction.status === "live" &&
     Number(auction.currentBid) === 0 &&
     (auction.bids?.length ?? 0) === 0 &&
     auction.bidCount === 0;
+  const canBid =
+    auction.status === "live" &&
+    Boolean(user) &&
+    !isOwner &&
+    hasPermission(user?.role, "bid:place") &&
+    !needsVerification(user);
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="mx-auto grid max-w-6xl gap-10 px-4 py-12 lg:grid-cols-[1.2fr_0.8fr]">
       <div>
-        <div className="overflow-hidden rounded-xl border border-border bg-muted">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={image}
-            alt={auction.title}
-            className="aspect-[4/3] w-full object-cover"
-          />
-        </div>
+        <AuctionGallery images={auction.images} title={auction.title} />
         <h1 className="mt-8 font-[family-name:var(--font-display)] text-4xl sm:text-5xl">
           {auction.title}
         </h1>
@@ -134,8 +150,21 @@ export default function AuctionDetailPage() {
           </h2>
           <ul className="mt-4 divide-y divide-border border-t border-border">
             {(auction.bids || []).map((b) => (
-              <li key={b.id} className="flex justify-between py-3 text-sm">
+              <li
+                key={b.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
+              >
                 <span>{b.bidder.name}</span>
+                <span className="text-muted-foreground">
+                  {new Date(b.createdAt).toLocaleString(undefined, {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
+                </span>
                 <span className="font-medium">{formatBdt(b.amount)}</span>
               </li>
             ))}
@@ -164,14 +193,77 @@ export default function AuctionDetailPage() {
           <p className="mt-1 text-xs text-background/50">
             {auction.bidCount} bids · Seller {auction.seller?.name}
           </p>
+          <p className="mt-1 text-xs text-background/60">
+            Minimum increase {formatBdt(increment)}
+          </p>
         </div>
         <CardContent className="space-y-3 p-6">
-          {canEditListing && <SellerEditPanel auction={auction} />}
+          {auction.status === "pending" && isOwner ? (
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => router.push(`/sell/${auction.id}/edit`)}
+            >
+              Edit listing
+            </Button>
+          ) : null}
 
-          {auction.status === "live" && user && !isOwner ? (
+          {canEditLive && <SellerEditPanel auction={auction} />}
+
+          {isOwner && auction.status === "live" ? (
+            confirmClose ? (
+              <div className="space-y-2 rounded-lg border border-border px-3 py-3 text-sm">
+                <p>
+                  Close this auction now? If the reserve is met, the highest
+                  bidder wins.
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="destructive"
+                    className="flex-1"
+                    disabled={closeAuction.isPending}
+                    onClick={async () => {
+                      try {
+                        await closeAuction.mutateAsync();
+                        toastSuccess("Auction closed");
+                        setConfirmClose(false);
+                      } catch (err) {
+                        toastFromError(err, "Could not close auction");
+                      }
+                    }}
+                  >
+                    {closeAuction.isPending ? "Closing…" : "Confirm close"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="flex-1"
+                    onClick={() => setConfirmClose(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => setConfirmClose(true)}
+              >
+                Close auction early
+              </Button>
+            )
+          ) : null}
+
+          {canBid ? (
             <form
               onSubmit={bidForm.handleSubmit(
                 async (values) => {
+                  if (values.amount < minBid) {
+                    const message = `Bid must be at least ${minBid} BDT`;
+                    bidForm.setError("amount", { message });
+                    toastFromError(new Error(message), message);
+                    return;
+                  }
                   try {
                     await placeBid.mutateAsync(values.amount);
                     toastSuccess("Bid placed successfully");
@@ -189,9 +281,13 @@ export default function AuctionDetailPage() {
                 <Input
                   id="bid-amount"
                   type="number"
-                  min={1}
+                  min={minBid}
+                  step={increment}
                   {...bidForm.register("amount")}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Next bid must be at least {formatBdt(minBid)}.
+                </p>
               </div>
               {bidForm.formState.errors.amount && (
                 <p className="text-sm text-destructive">
@@ -215,10 +311,15 @@ export default function AuctionDetailPage() {
             <Link href="/auth/login">
               <Button className="w-full">Log in to bid</Button>
             </Link>
+          ) : auction.status === "live" && isAdmin ? (
+            <p className="text-sm text-muted-foreground">
+              Admins cannot place bids.
+            </p>
+          ) : auction.status === "live" && user && !isOwner && needsVerification(user) ? (
+            <VerificationRequired action="bidding" />
           ) : auction.status === "live" && isOwner ? (
             <p className="text-sm text-muted-foreground">
-              This is your listing. Bidders will use the panel above once you
-              finish editing.
+              This is your listing.
             </p>
           ) : null}
 

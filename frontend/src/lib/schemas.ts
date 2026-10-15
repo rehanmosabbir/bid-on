@@ -57,16 +57,36 @@ export const sellSchema = z.object({
   startPrice: z.coerce.number().positive("Starting price required"),
   reservePrice: z.string().optional(),
   maxPriceCap: z.string().optional(),
+  minBidIncrement: z.coerce
+    .number()
+    .positive("Minimum bid gap must be greater than 0"),
   durationMinutes: z.coerce.number().min(1).max(43200),
   imageUrl: z.string().optional(),
 });
 
 export const sellerEditSchema = z.object({
   startPrice: z.coerce.number().positive("Starting price required"),
+  minBidIncrement: z.coerce
+    .number()
+    .positive("Minimum bid gap must be greater than 0"),
   durationMinutes: z.coerce
     .number()
     .min(1, "At least 1 minute")
     .max(43200, "Max 30 days"),
+});
+
+export const kycSchema = z.object({
+  fullName: z.string().min(2, "Full name is required"),
+  documentType: z.enum(["nid", "passport", "driving_license"]),
+  documentNumber: z.string().min(4, "Document number is required"),
+});
+
+export const bankSchema = z.object({
+  accountName: z.string().min(2, "Account name is required"),
+  bankName: z.string().min(2, "Bank name is required"),
+  accountNumber: z.string().min(6, "Account number is required"),
+  branch: z.string().min(2, "Branch is required"),
+  routingNumber: z.string().optional(),
 });
 
 export const profileSchema = z.object({
@@ -94,5 +114,7 @@ export type ResetPasswordValues = z.infer<typeof resetPasswordSchema>;
 export type BidValues = z.infer<typeof bidSchema>;
 export type SellValues = z.infer<typeof sellSchema>;
 export type SellerEditValues = z.infer<typeof sellerEditSchema>;
+export type KycValues = z.infer<typeof kycSchema>;
+export type BankValues = z.infer<typeof bankSchema>;
 export type ProfileValues = z.infer<typeof profileSchema>;
 export type ReviewValues = z.infer<typeof reviewSchema>;

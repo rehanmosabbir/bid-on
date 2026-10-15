@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -25,13 +25,20 @@ import {
 } from "@/components/ui/card";
 import { useCategories, useCreateAuction } from "@/hooks/queries";
 import { RequirePermission } from "@/components/RequirePermission";
+import {
+  needsVerification,
+  VerificationRequired,
+} from "@/components/VerificationRequired";
+import { useAuth } from "@/lib/auth";
 import { sellSchema, SellValues } from "@/lib/schemas";
 import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
 
 function SellInner() {
   const router = useRouter();
+  const user = useAuth((s) => s.user);
   const { data: catData } = useCategories();
   const createAuction = useCreateAuction();
+  const [files, setFiles] = useState<File[]>([]);
 
   const {
     register,
@@ -47,6 +54,7 @@ function SellInner() {
       description: "",
       categoryId: "",
       startPrice: 0,
+      minBidIncrement: 1,
       durationMinutes: 60,
       imageUrl: "",
       reservePrice: "",
@@ -55,6 +63,19 @@ function SellInner() {
   });
 
   const categoryId = watch("categoryId");
+
+  if (needsVerification(user)) {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-12">
+        <h1 className="font-[family-name:var(--font-display)] text-4xl">
+          Create listing
+        </h1>
+        <div className="mt-6">
+          <VerificationRequired action="creating a listing" />
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (catData?.categories?.[0]?.id) {
@@ -89,16 +110,9 @@ function SellInner() {
                 if (values.maxPriceCap) {
                   body.append("maxPriceCap", String(values.maxPriceCap));
                 }
+                body.append("minBidIncrement", String(values.minBidIncrement));
                 if (values.imageUrl) body.append("imageUrl", values.imageUrl);
-
-                const fileInput = document.getElementById(
-                  "sell-images"
-                ) as HTMLInputElement | null;
-                if (fileInput?.files) {
-                  Array.from(fileInput.files).forEach((f) =>
-                    body.append("images", f)
-                  );
-                }
+                files.forEach((file) => body.append("images", file));
 
                 const data = await createAuction.mutateAsync(body);
                 toastSuccess("Listing submitted for admin approval");
@@ -154,7 +168,7 @@ function SellInner() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="startPrice">Start price (BDT)</Label>
                 <Input
@@ -180,6 +194,25 @@ function SellInner() {
                 <p className="text-xs text-muted-foreground">
                   Minimum you’ll accept — auction won’t sell below this.
                 </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="minBidIncrement">Minimum bid increment</Label>
+                <Input
+                  id="minBidIncrement"
+                  type="number"
+                  min={1}
+                  step="1"
+                  {...register("minBidIncrement")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Each new bid must beat the current bid by at least this
+                  amount.
+                </p>
+                {errors.minBidIncrement && (
+                  <p className="text-sm text-destructive">
+                    {errors.minBidIncrement.message}
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="maxPriceCap">Max bid cap</Label>
@@ -214,7 +247,26 @@ function SellInner() {
                 type="file"
                 accept="image/*"
                 multiple
+                onChange={(event) =>
+                  setFiles(Array.from(event.target.files || []).slice(0, 8))
+                }
               />
+              {files.length > 0 ? (
+                <div className="flex gap-2 overflow-x-auto">
+                  {files.map((file) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={`${file.name}-${file.lastModified}`}
+                      src={URL.createObjectURL(file)}
+                      alt={file.name}
+                      className="h-16 w-20 rounded-md object-cover"
+                    />
+                  ))}
+                </div>
+              ) : null}
+              <p className="text-xs text-muted-foreground">
+                Select every photo at once. All of them appear on the listing.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="imageUrl">Or paste image URL</Label>

@@ -102,7 +102,7 @@ describe("API integration", () => {
       .send({ amount: 1 });
     expect([400, 201]).toContain(res.status);
     if (res.status === 400) {
-      expect(String(res.body.error)).toMatch(/at least|Bid/i);
+      expect(String(res.body.error)).toMatch(/at least|Bid|KYC|bank|Admin|ended/i);
     }
   });
 

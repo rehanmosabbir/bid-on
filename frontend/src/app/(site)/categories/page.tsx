@@ -29,7 +29,7 @@ export default function CategoriesPage() {
                     {c.name}
                   </CardTitle>
                   <CardDescription>
-                    {c._count?.auctions ?? 0} listings
+                    {c._count?.auctions ?? 0} listings · {c.liveCount ?? 0} live
                   </CardDescription>
                 </CardHeader>
               </Card>

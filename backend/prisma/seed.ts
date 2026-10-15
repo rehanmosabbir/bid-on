@@ -24,6 +24,22 @@ async function main() {
 
   const passwordHash = await bcrypt.hash("Password1", 12);
 
+  const verifiedProfile = {
+    kycStatus: "approved" as const,
+    kycFullName: "Demo User",
+    kycDocumentType: "nid",
+    kycDocumentNumber: "1234567890",
+    kycSubmittedAt: new Date(),
+    kycReviewedAt: new Date(),
+    bankStatus: "approved" as const,
+    bankAccountName: "Demo User",
+    bankName: "Demo Bank",
+    bankAccountNumber: "0123456789",
+    bankBranch: "Gulshan",
+    bankSubmittedAt: new Date(),
+    bankReviewedAt: new Date(),
+  };
+
   const admin = await prisma.user.upsert({
     where: { email: "admin@bidon.local" },
     update: {},
@@ -38,25 +54,31 @@ async function main() {
 
   const seller = await prisma.user.upsert({
     where: { email: "seller@bidon.local" },
-    update: {},
+    update: { ...verifiedProfile, kycFullName: "Demo Seller", bankAccountName: "Demo Seller" },
     create: {
       name: "Demo Seller",
       email: "seller@bidon.local",
       passwordHash,
       role: "seller",
       verified: true,
+      ...verifiedProfile,
+      kycFullName: "Demo Seller",
+      bankAccountName: "Demo Seller",
     },
   });
 
   const buyer = await prisma.user.upsert({
     where: { email: "buyer@bidon.local" },
-    update: {},
+    update: { ...verifiedProfile, kycFullName: "Demo Buyer", bankAccountName: "Demo Buyer" },
     create: {
       name: "Demo Buyer",
       email: "buyer@bidon.local",
       passwordHash,
       role: "buyer",
       verified: true,
+      ...verifiedProfile,
+      kycFullName: "Demo Buyer",
+      bankAccountName: "Demo Buyer",
     },
   });
 
@@ -79,6 +101,7 @@ async function main() {
         startPrice: 5000,
         reservePrice: 8000,
         maxPriceCap: 100000,
+        minBidIncrement: 100,
         currentBid: 0,
         status: "live",
         startsAt: new Date(),
@@ -97,6 +120,7 @@ async function main() {
           "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800",
         ],
         startPrice: 2500,
+        minBidIncrement: 50,
         currentBid: 0,
         status: "pending",
         endsAt: new Date(Date.now() + 72 * 60 * 60 * 1000),

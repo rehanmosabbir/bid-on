@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { publicUserSelect, toPublicUser } from "../lib/publicUser";
 import { authCookieOptions, requireAuth, signToken } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { resetOtpEmailHtml, sendEmail, verifyEmailHtml } from "../lib/email";
@@ -114,13 +115,7 @@ router.post(
 
     res.json({
       token: jwt,
-      user: {
-        id: updated.id,
-        name: updated.name,
-        email: updated.email,
-        role: updated.role,
-        verified: updated.verified,
-      },
+      user: toPublicUser(updated),
     });
   })
 );
@@ -191,14 +186,7 @@ router.post(
 
     res.json({
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        verified: user.verified,
-        ratingAvg: user.ratingAvg,
-      },
+      user: toPublicUser(user),
     });
   })
 );
@@ -287,20 +275,10 @@ router.get(
   asyncHandler(async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { id: req.user!.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        verified: true,
-        phone: true,
-        address: true,
-        ratingAvg: true,
-        ratingCount: true,
-        createdAt: true,
-      },
+      select: publicUserSelect,
     });
-    res.json({ user });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json({ user: toPublicUser(user) });
   })
 );
 

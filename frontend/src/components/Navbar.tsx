@@ -130,6 +130,12 @@ export function Navbar() {
                 <DropdownMenuItem onClick={() => router.push("/account")}>
                   Account
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/account/kyc")}>
+                  KYC
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/account/bank")}>
+                  Bank details
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => router.push("/dashboard")}>
                   Dashboard
                 </DropdownMenuItem>

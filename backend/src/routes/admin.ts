@@ -1,9 +1,12 @@
 import { Router } from "express";
+import { Prisma, VerificationStatus } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../lib/auth";
 import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
+import { createNotification } from "../services/notifications";
 
 const router = Router();
 
@@ -63,21 +66,61 @@ router.get(
   })
 );
 
+const verificationSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  verified: true,
+  suspended: true,
+  ratingAvg: true,
+  createdAt: true,
+  kycStatus: true,
+  kycFullName: true,
+  kycDocumentType: true,
+  kycDocumentNumber: true,
+  kycDocumentUrl: true,
+  kycSubmittedAt: true,
+  kycReviewedAt: true,
+  kycRejectReason: true,
+  bankStatus: true,
+  bankAccountName: true,
+  bankName: true,
+  bankAccountNumber: true,
+  bankBranch: true,
+  bankRoutingNumber: true,
+  bankSubmittedAt: true,
+  bankReviewedAt: true,
+  bankRejectReason: true,
+  _count: { select: { auctions: true, bids: true } },
+} satisfies Prisma.UserSelect;
+
+function verificationStatus(value: unknown): VerificationStatus | undefined {
+  if (value === "none" || value === "pending" || value === "approved" || value === "rejected") {
+    return value;
+  }
+  return undefined;
+}
+
 router.get(
   "/users",
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
+    const role = typeof req.query.role === "string" ? req.query.role : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const where: Prisma.UserWhereInput = {};
+    if (role && role !== "all" && ["buyer", "seller", "admin"].includes(role)) {
+      where.role = role as Prisma.UserWhereInput["role"];
+    }
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
     const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        verified: true,
-        suspended: true,
-        ratingAvg: true,
-        createdAt: true,
-        _count: { select: { auctions: true, bids: true } },
-      },
+      where,
+      select: verificationSelect,
       orderBy: { createdAt: "desc" },
     });
     res.json({ users });
@@ -100,9 +143,29 @@ router.patch(
 router.get(
   "/auctions",
   asyncHandler(async (req, res) => {
-    const status = req.query.status as string | undefined;
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const sellerId = typeof req.query.sellerId === "string" ? req.query.sellerId : undefined;
+    const categoryId =
+      typeof req.query.categoryId === "string" ? req.query.categoryId : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+
+    const where: Prisma.AuctionWhereInput = {};
+    if (status && status !== "all") {
+      where.status = status as Prisma.AuctionWhereInput["status"];
+    }
+    if (sellerId) where.sellerId = sellerId;
+    if (categoryId) where.categoryId = categoryId;
+    if (q) {
+      where.OR = [
+        { title: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+        { seller: { name: { contains: q, mode: "insensitive" } } },
+        { seller: { email: { contains: q, mode: "insensitive" } } },
+      ];
+    }
+
     const auctions = await prisma.auction.findMany({
-      where: status ? { status: status as never } : undefined,
+      where,
       include: {
         seller: { select: { id: true, name: true, email: true } },
         category: true,
@@ -111,6 +174,121 @@ router.get(
       orderBy: { createdAt: "desc" },
     });
     res.json({ auctions });
+  })
+);
+
+router.get(
+  "/verifications",
+  asyncHandler(async (req, res) => {
+    const role = typeof req.query.role === "string" ? req.query.role : undefined;
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const queue = req.query.queue === "pending";
+    const kycStatus = verificationStatus(req.query.kycStatus);
+    const bankStatus = verificationStatus(req.query.bankStatus);
+
+    const where: Prisma.UserWhereInput = {};
+    if (role && role !== "all" && ["buyer", "seller"].includes(role)) {
+      where.role = role as Prisma.UserWhereInput["role"];
+    } else {
+      where.role = { in: ["buyer", "seller"] };
+    }
+
+    const and: Prisma.UserWhereInput[] = [];
+    if (q) {
+      and.push({
+        OR: [
+          { name: { contains: q, mode: "insensitive" } },
+          { email: { contains: q, mode: "insensitive" } },
+        ],
+      });
+    }
+    if (queue) {
+      and.push({ OR: [{ kycStatus: "pending" }, { bankStatus: "pending" }] });
+    }
+    if (kycStatus) and.push({ kycStatus });
+    if (bankStatus) and.push({ bankStatus });
+    if (and.length) where.AND = and;
+
+    const users = await prisma.user.findMany({
+      where,
+      select: verificationSelect,
+      orderBy: { updatedAt: "desc" },
+    });
+    res.json({ users });
+  })
+);
+
+router.post(
+  "/users/:id/kyc",
+  asyncHandler(async (req, res) => {
+    const decision = z.enum(["approved", "rejected"]).parse(req.body.decision);
+    const reason = z.string().optional().parse(req.body.reason);
+    const user = await prisma.user.findUnique({ where: { id: param(req, "id") } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.kycStatus !== "pending") {
+      return res.status(400).json({ error: "Only pending KYC submissions can be reviewed" });
+    }
+    if (decision === "rejected" && (!reason || reason.trim().length < 3)) {
+      return res.status(400).json({ error: "A rejection reason is required" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        kycStatus: decision,
+        kycReviewedAt: new Date(),
+        kycRejectReason: decision === "rejected" ? reason!.trim() : null,
+      },
+      select: verificationSelect,
+    });
+
+    await createNotification(
+      user.id,
+      "general",
+      decision === "approved"
+        ? "Your identity verification was approved."
+        : `Your identity verification was rejected: ${reason!.trim()}`,
+      { kind: "kyc", decision }
+    );
+
+    res.json({ user: updated });
+  })
+);
+
+router.post(
+  "/users/:id/bank",
+  asyncHandler(async (req, res) => {
+    const decision = z.enum(["approved", "rejected"]).parse(req.body.decision);
+    const reason = z.string().optional().parse(req.body.reason);
+    const user = await prisma.user.findUnique({ where: { id: param(req, "id") } });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    if (user.bankStatus !== "pending") {
+      return res.status(400).json({ error: "Only pending bank details can be reviewed" });
+    }
+    if (decision === "rejected" && (!reason || reason.trim().length < 3)) {
+      return res.status(400).json({ error: "A rejection reason is required" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        bankStatus: decision,
+        bankReviewedAt: new Date(),
+        bankRejectReason: decision === "rejected" ? reason!.trim() : null,
+      },
+      select: verificationSelect,
+    });
+
+    await createNotification(
+      user.id,
+      "general",
+      decision === "approved"
+        ? "Your bank details were approved."
+        : `Your bank details were rejected: ${reason!.trim()}`,
+      { kind: "bank", decision }
+    );
+
+    res.json({ user: updated });
   })
 );
 

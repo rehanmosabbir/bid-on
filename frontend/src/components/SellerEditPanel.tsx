@@ -22,6 +22,7 @@ export function SellerEditPanel({ auction }: { auction: Auction }) {
     resolver: zodResolver(sellerEditSchema),
     defaultValues: {
       startPrice: Number(auction.startPrice) || 0,
+      minBidIncrement: Number(auction.minBidIncrement) || 1,
       durationMinutes: remainingMinutes(auction.endsAt),
     },
   });
@@ -29,10 +30,11 @@ export function SellerEditPanel({ auction }: { auction: Auction }) {
   useEffect(() => {
     form.reset({
       startPrice: Number(auction.startPrice) || 0,
+      minBidIncrement: Number(auction.minBidIncrement) || 1,
       durationMinutes: remainingMinutes(auction.endsAt),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when auction values change
-  }, [auction.id, auction.startPrice, auction.endsAt]);
+  }, [auction.id, auction.startPrice, auction.minBidIncrement, auction.endsAt]);
 
   return (
     <form
@@ -52,8 +54,8 @@ export function SellerEditPanel({ auction }: { auction: Auction }) {
     >
       <p className="text-sm font-medium">Edit listing</p>
       <p className="text-xs text-muted-foreground">
-        Change the opening bid and how long the auction runs. Locked once
-        someone bids.
+        Change the opening bid, the minimum gap between bids, and how long the
+        auction runs. Locked once someone bids.
       </p>
       <div className="space-y-2">
         <Label htmlFor="edit-startPrice">Start price (BDT)</Label>
@@ -66,6 +68,21 @@ export function SellerEditPanel({ auction }: { auction: Auction }) {
         {form.formState.errors.startPrice && (
           <p className="text-sm text-destructive">
             {form.formState.errors.startPrice.message}
+          </p>
+        )}
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="edit-increment">Minimum bid increment (BDT)</Label>
+        <Input
+          id="edit-increment"
+          type="number"
+          min={1}
+          step="1"
+          {...form.register("minBidIncrement")}
+        />
+        {form.formState.errors.minBidIncrement && (
+          <p className="text-sm text-destructive">
+            {form.formState.errors.minBidIncrement.message}
           </p>
         )}
       </div>

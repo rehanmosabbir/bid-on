@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { RequirePermission, useHasPermission } from "@/components/RequirePermission";
+import { verificationLabel } from "@/components/VerificationRequired";
+import { Badge } from "@/components/ui/badge";
 import { useUpdateProfile } from "@/hooks/queries";
 import { useAuth } from "@/lib/auth";
 import { profileSchema, ProfileValues } from "@/lib/schemas";
@@ -59,6 +62,26 @@ function AccountInner() {
 
   return (
     <div className="mx-auto max-w-lg px-4 py-12">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <Link
+          href="/account/kyc"
+          className="rounded-lg border border-border px-4 py-3 hover:bg-muted/50"
+        >
+          <p className="text-sm font-medium">Identity verification</p>
+          <Badge variant="secondary" className="mt-2">
+            {verificationLabel(user.kycStatus)}
+          </Badge>
+        </Link>
+        <Link
+          href="/account/bank"
+          className="rounded-lg border border-border px-4 py-3 hover:bg-muted/50"
+        >
+          <p className="text-sm font-medium">Bank details</p>
+          <Badge variant="secondary" className="mt-2">
+            {verificationLabel(user.bankStatus)}
+          </Badge>
+        </Link>
+      </div>
       <Card>
         <CardHeader>
           <CardTitle className="font-[family-name:var(--font-display)] text-4xl">

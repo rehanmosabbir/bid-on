@@ -9,6 +9,8 @@ describe("permissions", () => {
     expect(hasPermission("seller", "admin:access")).toBe(false);
     expect(hasPermission("admin", "account:switch_role")).toBe(false);
     expect(hasPermission("buyer", "account:switch_role")).toBe(true);
+    expect(hasPermission("admin", "bid:place")).toBe(false);
+    expect(hasPermission("buyer", "bid:place")).toBe(true);
   });
 
   it("exposes a non-empty matrix for every role", () => {

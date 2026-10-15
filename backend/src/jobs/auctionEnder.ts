@@ -2,12 +2,14 @@ import { prisma } from "../lib/prisma";
 import { emitAuctionEnded } from "../socket";
 import { createNotification } from "../services/notifications";
 
-/** Close a single live auction that has passed endsAt. Returns updated auction or null. */
-export async function finalizeExpiredAuction(auctionId: string) {
+/** Close a live auction. Expired lots close on their own; `force` lets the seller end early. */
+export async function finalizeAuction(
+  auctionId: string,
+  options?: { force?: boolean }
+) {
   const auction = await prisma.auction.findUnique({ where: { id: auctionId } });
-  if (!auction || auction.status !== "live" || auction.endsAt > new Date()) {
-    return null;
-  }
+  if (!auction || auction.status !== "live") return null;
+  if (!options?.force && auction.endsAt > new Date()) return null;
 
   const topBid = await prisma.bid.findFirst({
     where: { auctionId: auction.id },
@@ -22,6 +24,7 @@ export async function finalizeExpiredAuction(auctionId: string) {
     where: { id: auction.id },
     data: {
       status: "ended",
+      endsAt: options?.force ? new Date() : auction.endsAt,
       winnerId: meetsReserve && topBid ? topBid.bidderId : null,
     },
   });
@@ -51,6 +54,11 @@ export async function finalizeExpiredAuction(auctionId: string) {
   );
 
   return updated;
+}
+
+/** Close a single live auction that has passed endsAt. Returns updated auction or null. */
+export async function finalizeExpiredAuction(auctionId: string) {
+  return finalizeAuction(auctionId);
 }
 
 export async function closeExpiredAuctions() {

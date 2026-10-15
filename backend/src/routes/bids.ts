@@ -8,6 +8,8 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
 import { emitBidUpdate } from "../socket";
 import { createNotification } from "../services/notifications";
+import { minimumNextBid } from "../lib/bidding";
+import { assertReadyToTransact } from "../lib/compliance";
 
 const router = Router({ mergeParams: true });
 
@@ -20,6 +22,8 @@ router.post(
     const auctionId = param(req, "id") || param(req, "auctionId");
     const bidderId = req.user!.id;
 
+    await assertReadyToTransact(bidderId, "bid");
+
     const result = await prisma.$transaction(async (tx) => {
       const auction = await tx.auction.findUnique({ where: { id: auctionId } });
       if (!auction) throw new Error("Auction not found");
@@ -27,10 +31,7 @@ router.post(
       if (auction.endsAt <= new Date()) throw new Error("Auction has ended");
       if (auction.sellerId === bidderId) throw new Error("Cannot bid on your own auction");
 
-      const minBid =
-        Number(auction.currentBid) > 0
-          ? Number(auction.currentBid) + 1
-          : Number(auction.startPrice);
+      const minBid = minimumNextBid(auction);
 
       if (amount < minBid) {
         throw new Error(`Bid must be at least ${minBid} BDT`);

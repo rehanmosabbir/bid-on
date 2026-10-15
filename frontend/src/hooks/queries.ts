@@ -5,7 +5,60 @@ export type Category = {
   id: string;
   name: string;
   slug: string;
+  liveCount?: number;
   _count?: { auctions: number };
+};
+
+export type AdminAuctionFilters = {
+  status?: string;
+  sellerId?: string;
+  categoryId?: string;
+  q?: string;
+};
+
+export type KycRecord = {
+  status: string;
+  fullName: string | null;
+  documentType: string | null;
+  documentNumber: string | null;
+  documentUrl: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  rejectReason: string | null;
+};
+
+export type BankRecord = {
+  status: string;
+  accountName: string | null;
+  bankName: string | null;
+  accountNumber: string | null;
+  branch: string | null;
+  routingNumber: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  rejectReason: string | null;
+};
+
+export type AdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  suspended: boolean;
+  verified: boolean;
+  kycStatus?: string;
+  bankStatus?: string;
+  kycFullName?: string | null;
+  kycDocumentType?: string | null;
+  kycDocumentNumber?: string | null;
+  kycDocumentUrl?: string | null;
+  kycRejectReason?: string | null;
+  bankAccountName?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankBranch?: string | null;
+  bankRoutingNumber?: string | null;
+  bankRejectReason?: string | null;
 };
 
 export const queryKeys = {
@@ -149,7 +202,15 @@ export function useCreateAuction() {
 export function useUpdateAuction(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { startPrice: number; durationMinutes: number }) =>
+    mutationFn: (
+      data:
+        | FormData
+        | {
+            startPrice?: number;
+            durationMinutes?: number;
+            minBidIncrement?: number;
+          }
+    ) =>
       api<{ auction: Auction }>(`/api/auctions/${id}`, {
         method: "PATCH",
         data,
@@ -228,30 +289,190 @@ export function useAdminStats(enabled = true) {
   });
 }
 
-export function useAdminUsers(enabled = true) {
+export function useAdminUsers(
+  enabled = true,
+  filters: { role?: string; q?: string } = {}
+) {
+  const qs = new URLSearchParams();
+  if (filters.role && filters.role !== "all") qs.set("role", filters.role);
+  if (filters.q) qs.set("q", filters.q);
+  const query = qs.toString();
   return useQuery({
-    queryKey: queryKeys.adminUsers,
+    queryKey: ["admin", "users", query || "all"],
     queryFn: () =>
-      api<{
-        users: Array<{
-          id: string;
-          name: string;
-          email: string;
-          role: string;
-          suspended: boolean;
-          verified: boolean;
-        }>;
-      }>("/api/admin/users"),
+      api<{ users: AdminUser[] }>(
+        `/api/admin/users${query ? `?${query}` : ""}`
+      ),
     enabled,
   });
 }
 
-export function useAdminAuctions(status?: string, enabled = true) {
-  const qs = status ? `?status=${status}` : "";
+export function useAdminAuctions(
+  statusOrFilters?: string | AdminAuctionFilters,
+  enabled = true
+) {
+  const filters: AdminAuctionFilters =
+    typeof statusOrFilters === "string" || statusOrFilters === undefined
+      ? { status: statusOrFilters }
+      : statusOrFilters;
+  const qs = new URLSearchParams();
+  if (filters.status && filters.status !== "all") qs.set("status", filters.status);
+  if (filters.sellerId && filters.sellerId !== "all") {
+    qs.set("sellerId", filters.sellerId);
+  }
+  if (filters.categoryId && filters.categoryId !== "all") {
+    qs.set("categoryId", filters.categoryId);
+  }
+  if (filters.q) qs.set("q", filters.q);
+  const query = qs.toString();
   return useQuery({
-    queryKey: queryKeys.adminAuctions(status),
-    queryFn: () => api<{ auctions: Auction[] }>(`/api/admin/auctions${qs}`),
+    queryKey: ["admin", "auctions", query || "all"],
+    queryFn: () =>
+      api<{ auctions: Auction[] }>(
+        `/api/admin/auctions${query ? `?${query}` : ""}`
+      ),
     enabled,
+    staleTime: 0,
+  });
+}
+
+export function useCloseAuction(auctionId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api(`/api/auctions/${auctionId}/close`, { method: "POST" }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.auction(auctionId) });
+      qc.invalidateQueries({ queryKey: queryKeys.meListings });
+      qc.invalidateQueries({ queryKey: ["auctions"] });
+      qc.invalidateQueries({ queryKey: ["admin"] });
+    },
+  });
+}
+
+export function useMyKyc(enabled = true) {
+  return useQuery({
+    queryKey: ["me", "kyc"],
+    queryFn: () => api<{ kyc: KycRecord }>("/api/users/me/kyc"),
+    enabled,
+  });
+}
+
+export function useSubmitKyc() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (formData: FormData) =>
+      api<{ kyc: KycRecord }>("/api/users/me/kyc", {
+        method: "POST",
+        data: formData,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me", "kyc"] });
+    },
+  });
+}
+
+export function useMyBank(enabled = true) {
+  return useQuery({
+    queryKey: ["me", "bank"],
+    queryFn: () => api<{ bank: BankRecord }>("/api/users/me/bank"),
+    enabled,
+  });
+}
+
+export function useSubmitBank() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      accountName: string;
+      bankName: string;
+      accountNumber: string;
+      branch: string;
+      routingNumber?: string;
+    }) =>
+      api<{ bank: BankRecord }>("/api/users/me/bank", {
+        method: "PUT",
+        data,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["me", "bank"] });
+    },
+  });
+}
+
+export function useAdminVerifications(
+  filters: {
+    role?: string;
+    q?: string;
+    queue?: string;
+    kycStatus?: string;
+    bankStatus?: string;
+  } = {},
+  enabled = true
+) {
+  const qs = new URLSearchParams();
+  if (filters.role && filters.role !== "all") qs.set("role", filters.role);
+  if (filters.q) qs.set("q", filters.q);
+  if (filters.queue) qs.set("queue", filters.queue);
+  if (filters.kycStatus && filters.kycStatus !== "all") {
+    qs.set("kycStatus", filters.kycStatus);
+  }
+  if (filters.bankStatus && filters.bankStatus !== "all") {
+    qs.set("bankStatus", filters.bankStatus);
+  }
+  const query = qs.toString();
+  return useQuery({
+    queryKey: ["admin", "verifications", query || "all"],
+    queryFn: () =>
+      api<{ users: AdminUser[] }>(
+        `/api/admin/verifications${query ? `?${query}` : ""}`
+      ),
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useReviewKyc() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      decision,
+      reason,
+    }: {
+      id: string;
+      decision: "approved" | "rejected";
+      reason?: string;
+    }) =>
+      api(`/api/admin/users/${id}/kyc`, {
+        method: "POST",
+        data: { decision, reason },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin"] });
+    },
+  });
+}
+
+export function useReviewBank() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      decision,
+      reason,
+    }: {
+      id: string;
+      decision: "approved" | "rejected";
+      reason?: string;
+    }) =>
+      api(`/api/admin/users/${id}/bank`, {
+        method: "POST",
+        data: { decision, reason },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin"] });
+    },
   });
 }
 

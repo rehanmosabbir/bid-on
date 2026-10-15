@@ -2,6 +2,8 @@ import axios, { AxiosError, AxiosRequestConfig } from "axios";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
+export type VerificationStatus = "none" | "pending" | "approved" | "rejected";
+
 export type User = {
   id: string;
   name: string;
@@ -11,6 +13,8 @@ export type User = {
   ratingAvg?: number;
   phone?: string | null;
   address?: string | null;
+  kycStatus?: VerificationStatus;
+  bankStatus?: VerificationStatus;
 };
 
 export type Auction = {
@@ -22,12 +26,15 @@ export type Auction = {
   reservePrice?: string | number | null;
   maxPriceCap?: string | number | null;
   currentBid: string | number;
+  minBidIncrement?: string | number;
   bidCount: number;
   status: string;
+  rejectReason?: string | null;
   startsAt?: string | null;
   endsAt: string;
+  createdAt?: string;
   category?: { id: string; name: string; slug: string };
-  seller?: { id: string; name: string; ratingAvg?: number };
+  seller?: { id: string; name: string; email?: string; ratingAvg?: number };
   winner?: { id: string; name: string } | null;
   bids?: Array<{
     id: string;

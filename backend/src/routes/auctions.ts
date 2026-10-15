@@ -1,39 +1,31 @@
-import { Router } from "express";
+import { NextFunction, Request, Response, Router } from "express";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import multer from "multer";
-import path from "path";
-import fs from "fs";
 import { prisma } from "../lib/prisma";
 import { requireAuth, optionalAuth } from "../lib/auth";
 import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { createNotification } from "../services/notifications";
 import { param } from "../lib/params";
-import { finalizeExpiredAuction } from "../jobs/auctionEnder";
+import { finalizeAuction, finalizeExpiredAuction } from "../jobs/auctionEnder";
+import { imageUpload } from "../lib/upload";
+import { assertReadyToTransact } from "../lib/compliance";
 
 const router = Router();
 
-const uploadDir = path.resolve(process.env.UPLOAD_DIR || "uploads");
-fs.mkdirSync(uploadDir, { recursive: true });
+function maybeImages(req: Request, res: Response, next: NextFunction) {
+  const type = req.headers["content-type"] || "";
+  if (type.includes("multipart/form-data")) {
+    return imageUpload.array("images", 8)(req, res, next);
+  }
+  next();
+}
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, unique + path.extname(file.originalname));
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    if (!file.mimetype.startsWith("image/")) {
-      return cb(new Error("Only images allowed"));
-    }
-    cb(null, true);
-  },
-});
+function asStringArray(value: unknown): string[] {
+  if (value === undefined || value === null || value === "") return [];
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  return [String(value)].filter(Boolean);
+}
 
 function auctionInclude() {
   return {
@@ -117,8 +109,10 @@ router.post(
   "/",
   requireAuth,
   requirePermission("listing:create"),
-  upload.array("images", 5),
+  imageUpload.array("images", 8),
   asyncHandler(async (req, res) => {
+    await assertReadyToTransact(req.user!.id, "sell");
+
     const schema = z.object({
       title: z.string().min(3),
       description: z.string().min(10),
@@ -126,14 +120,13 @@ router.post(
       startPrice: z.coerce.number().positive(),
       reservePrice: z.coerce.number().positive().optional(),
       maxPriceCap: z.coerce.number().positive().optional(),
+      minBidIncrement: z.coerce.number().positive().default(1),
       durationMinutes: z.coerce.number().min(1).max(43200).default(4320),
     });
     const data = schema.parse(req.body);
     const files = (req.files as Express.Multer.File[]) || [];
     const images = files.map((f) => `/uploads/${f.filename}`);
-    if (images.length === 0 && req.body.imageUrl) {
-      images.push(String(req.body.imageUrl));
-    }
+    if (req.body.imageUrl) images.push(String(req.body.imageUrl));
     if (images.length === 0) {
       return res.status(400).json({ error: "At least one image is required" });
     }
@@ -149,6 +142,7 @@ router.post(
         startPrice: data.startPrice,
         reservePrice: data.reservePrice,
         maxPriceCap: data.maxPriceCap,
+        minBidIncrement: data.minBidIncrement,
         currentBid: 0,
         status: "pending",
         endsAt,
@@ -160,20 +154,14 @@ router.post(
   })
 );
 
+const optionalMoney = z.union([z.coerce.number().positive(), z.literal("")]).optional();
+
 router.patch(
   "/:id",
   requireAuth,
   requirePermission("listing:create"),
+  maybeImages,
   asyncHandler(async (req, res) => {
-    const schema = z.object({
-      startPrice: z.coerce.number().positive().optional(),
-      durationMinutes: z.coerce.number().min(1).max(43200).optional(),
-    });
-    const data = schema.parse(req.body);
-    if (data.startPrice === undefined && data.durationMinutes === undefined) {
-      return res.status(400).json({ error: "Nothing to update" });
-    }
-
     const auction = await prisma.auction.findUnique({
       where: { id: param(req, "id") },
       include: { _count: { select: { bids: true } } },
@@ -187,18 +175,76 @@ router.patch(
         error: "Only pending or live listings can be edited",
       });
     }
-    if (auction._count.bids > 0 || Number(auction.currentBid) > 0) {
+
+    const noBids = auction._count.bids === 0 && Number(auction.currentBid) === 0;
+    if (auction.status === "live" && !noBids) {
       return res.status(400).json({
         error: "Cannot change price or duration after bids have been placed",
       });
     }
 
     const update: Prisma.AuctionUpdateInput = {};
-    if (data.startPrice !== undefined) {
-      update.startPrice = data.startPrice;
+
+    if (auction.status === "pending") {
+      const schema = z.object({
+        title: z.string().min(3).optional(),
+        description: z.string().min(10).optional(),
+        categoryId: z.string().min(1).optional(),
+        startPrice: z.coerce.number().positive().optional(),
+        reservePrice: optionalMoney,
+        maxPriceCap: optionalMoney,
+        minBidIncrement: z.coerce.number().positive().optional(),
+        durationMinutes: z.coerce.number().min(1).max(43200).optional(),
+      });
+      const data = schema.parse(req.body);
+      if (data.title !== undefined) update.title = data.title;
+      if (data.description !== undefined) update.description = data.description;
+      if (data.categoryId !== undefined) {
+        update.category = { connect: { id: data.categoryId } };
+      }
+      if (data.startPrice !== undefined) update.startPrice = data.startPrice;
+      if (data.reservePrice === "") update.reservePrice = null;
+      else if (data.reservePrice !== undefined) update.reservePrice = data.reservePrice;
+      if (data.maxPriceCap === "") update.maxPriceCap = null;
+      else if (data.maxPriceCap !== undefined) update.maxPriceCap = data.maxPriceCap;
+      if (data.minBidIncrement !== undefined) update.minBidIncrement = data.minBidIncrement;
+      if (data.durationMinutes !== undefined) {
+        update.endsAt = new Date(Date.now() + data.durationMinutes * 60 * 1000);
+      }
+
+      const files = (req.files as Express.Multer.File[]) || [];
+      const uploaded = files.map((f) => `/uploads/${f.filename}`);
+      if (req.body.imageUrl) uploaded.push(String(req.body.imageUrl));
+      if (uploaded.length > 0 || req.body.existingImages !== undefined) {
+        const images = [...asStringArray(req.body.existingImages), ...uploaded];
+        if (images.length === 0) {
+          return res.status(400).json({ error: "At least one image is required" });
+        }
+        update.images = images;
+      }
+    } else {
+      const schema = z.object({
+        startPrice: z.coerce.number().positive().optional(),
+        minBidIncrement: z.coerce.number().positive().optional(),
+        durationMinutes: z.coerce.number().min(1).max(43200).optional(),
+      });
+      const data = schema.parse(req.body);
+      if (
+        data.startPrice === undefined &&
+        data.durationMinutes === undefined &&
+        data.minBidIncrement === undefined
+      ) {
+        return res.status(400).json({ error: "Nothing to update" });
+      }
+      if (data.startPrice !== undefined) update.startPrice = data.startPrice;
+      if (data.minBidIncrement !== undefined) update.minBidIncrement = data.minBidIncrement;
+      if (data.durationMinutes !== undefined) {
+        update.endsAt = new Date(Date.now() + data.durationMinutes * 60 * 1000);
+      }
     }
-    if (data.durationMinutes !== undefined) {
-      update.endsAt = new Date(Date.now() + data.durationMinutes * 60 * 1000);
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: "Nothing to update" });
     }
 
     const updated = await prisma.auction.update({
@@ -208,6 +254,30 @@ router.patch(
     });
 
     res.json({ auction: updated, message: "Listing updated" });
+  })
+);
+
+router.post(
+  "/:id/close",
+  requireAuth,
+  requirePermission("listing:create"),
+  asyncHandler(async (req, res) => {
+    const auction = await prisma.auction.findUnique({
+      where: { id: param(req, "id") },
+    });
+    if (!auction) return res.status(404).json({ error: "Auction not found" });
+    if (auction.sellerId !== req.user!.id && req.user!.role !== "admin") {
+      return res.status(403).json({ error: "Only the seller can close this auction" });
+    }
+    if (auction.status !== "live") {
+      return res.status(400).json({ error: "Only live auctions can be closed early" });
+    }
+
+    const updated = await finalizeAuction(auction.id, { force: true });
+    if (!updated) {
+      return res.status(400).json({ error: "Auction could not be closed" });
+    }
+    res.json({ auction: updated, message: "Auction closed" });
   })
 );
 
