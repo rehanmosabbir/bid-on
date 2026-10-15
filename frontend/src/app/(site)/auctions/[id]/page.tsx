@@ -38,6 +38,7 @@ import { useSocket } from "@/lib/socket";
 import { bidSchema, BidValues, reviewSchema, ReviewValues } from "@/lib/schemas";
 import { toastFromError, toastSuccess, toastValidationErrors } from "@/lib/toast";
 import { SellerEditPanel } from "@/components/SellerEditPanel";
+import { EscrowPanel } from "@/components/EscrowPanel";
 
 export default function AuctionDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -53,6 +54,7 @@ export default function AuctionDetailPage() {
   const [confirmClose, setConfirmClose] = useState(false);
 
   const auction = data?.auction;
+  const escrow = data?.escrow ?? null;
   const watching = data?.watching ?? false;
 
   const bidForm = useForm<BidValues>({
@@ -114,8 +116,12 @@ export default function AuctionDetailPage() {
   const minBid = leadingPrice + increment;
   const isEnded = ["ended", "sold"].includes(auction.status);
   const isWinner = Boolean(user && auction.winner?.id === user.id);
-  const canPay = Boolean(isWinner && isEnded && auction.status !== "sold");
-  const alreadyPaid = auction.status === "sold" && isWinner;
+  const fundsSettled = Boolean(
+    escrow && ["held", "disputed", "completed"].includes(escrow.status)
+  );
+  const canPay = Boolean(
+    isWinner && auction.status === "ended" && !fundsSettled
+  );
   const isOwner = Boolean(user && auction.seller?.id === user.id);
   const canEditLive =
     isOwner &&
@@ -333,18 +339,16 @@ export default function AuctionDetailPage() {
                   </p>
                   {canPay && (
                     <p className="text-muted-foreground">
-                      Complete payment to claim this lot.
+                      Pay into escrow to claim this lot. Funds release when you
+                      confirm receipt.
                     </p>
-                  )}
-                  {alreadyPaid && (
-                    <p className="text-primary">Payment completed.</p>
                   )}
                   {!user && (
                     <p className="text-muted-foreground">
                       Log in as the winner to pay.
                     </p>
                   )}
-                  {user && !isWinner && !alreadyPaid && (
+                  {user && !isWinner && !isOwner && (
                     <p className="text-muted-foreground">
                       Only the winning bidder can check out.
                     </p>
@@ -381,12 +385,17 @@ export default function AuctionDetailPage() {
             </Button>
           )}
 
+          {escrow && user && (isWinner || isOwner || isAdmin) ? (
+            <EscrowPanel escrow={escrow} userId={user.id} />
+          ) : null}
+
           {canPay && (
-            <Link href={`/checkout/${auction.id}`}>
-              <Button className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
-                Pay now
-              </Button>
-            </Link>
+            <Button
+              className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+              onClick={() => router.push(`/checkout/${auction.id}`)}
+            >
+              Pay into escrow
+            </Button>
           )}
 
           {!user && isEnded && auction.winner && (

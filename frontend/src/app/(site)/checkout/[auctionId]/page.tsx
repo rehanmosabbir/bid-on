@@ -7,6 +7,7 @@ import { api, formatBdt } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toastError, toastFromError, toastInfo, toastSuccess } from "@/lib/toast";
 import { Button } from "@/components/ui/button";
+import { EscrowPanel } from "@/components/EscrowPanel";
 import {
   Card,
   CardContent,
@@ -75,7 +76,10 @@ function CheckoutInner() {
   }, [successFlag, sessionId, refetch]);
 
   const auction = data?.auction;
-  const alreadySold = auction?.status === "sold";
+  const escrow = data?.escrow;
+  const fundsHeld = Boolean(
+    escrow && ["held", "disputed", "completed"].includes(escrow.status)
+  );
 
   if (isLoading || !auction) {
     return <p className="p-10 text-muted-foreground">Loading…</p>;
@@ -100,12 +104,17 @@ function CheckoutInner() {
               Checkout was canceled. You can try again.
             </p>
           )}
-          {(paid || alreadySold) && (
+          {(paid || fundsHeld) && (
             <p className="text-sm text-accent">
-              {confirming ? "Confirming payment…" : "Payment successful."}
+              {confirming
+                ? "Confirming payment…"
+                : "Payment received. Funds are held in escrow until you confirm receipt."}
             </p>
           )}
-          {user?.id === auction.winner?.id && !paid && !alreadySold ? (
+          {escrow && user ? (
+            <EscrowPanel escrow={escrow} userId={user.id} />
+          ) : null}
+          {user?.id === auction.winner?.id && !paid && !fundsHeld ? (
             <Button
               className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
               disabled={checkout.isPending}
@@ -125,7 +134,7 @@ function CheckoutInner() {
                 }
               }}
             >
-              {checkout.isPending ? "Processing…" : "Pay with Stripe (test)"}
+              {checkout.isPending ? "Processing…" : "Pay into escrow"}
             </Button>
           ) : user?.id !== auction.winner?.id ? (
             <p className="text-sm text-destructive">

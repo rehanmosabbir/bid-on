@@ -61,6 +61,33 @@ export type AdminUser = {
   bankRejectReason?: string | null;
 };
 
+export type Escrow = {
+  id: string;
+  auctionId: string;
+  buyerId: string;
+  sellerId: string;
+  amount: string | number;
+  status: string;
+  heldAt: string | null;
+  releaseDueAt: string | null;
+  shippedAt: string | null;
+  releasedAt: string | null;
+  disputeReason: string | null;
+  disputedAt: string | null;
+  resolvedAt: string | null;
+  resolveNote: string | null;
+  auction?: { id: string; title: string; status?: string };
+  buyer?: { id: string; name: string; email?: string };
+  seller?: {
+    id: string;
+    name: string;
+    email?: string;
+    bankStatus?: string;
+    bankName?: string | null;
+    bankAccountName?: string | null;
+  };
+};
+
 export const queryKeys = {
   auctions: (params?: Record<string, string>) =>
     ["auctions", params ?? {}] as const,
@@ -95,7 +122,9 @@ export function useAuction(id: string) {
   return useQuery({
     queryKey: queryKeys.auction(id),
     queryFn: () =>
-      api<{ auction: Auction; watching: boolean }>(`/api/auctions/${id}`),
+      api<{ auction: Auction; watching: boolean; escrow: Escrow | null }>(
+        `/api/auctions/${id}`
+      ),
     enabled: Boolean(id),
   });
 }
@@ -144,7 +173,7 @@ export function useMyTransactions(enabled = true) {
           id: string;
           amount: number;
           status: string;
-          auction: { title: string };
+          auction: { id: string; title: string };
         }>;
       }>("/api/users/me/transactions"),
     enabled,
@@ -282,6 +311,7 @@ export function useAdminStats(enabled = true) {
           pending: number;
           bids: number;
           revenue: number;
+          escrowHeld: number;
         };
         bidsByDay: Array<{ day: string; count: number }>;
       }>("/api/admin/stats"),
@@ -571,5 +601,70 @@ export function useResetPassword() {
         method: "POST",
         data,
       }),
+  });
+}
+
+function useEscrowMutation<TBody>(
+  path: (id: string) => string,
+  method: "POST" = "POST"
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { id: string; body?: TBody }) =>
+      api<{ escrow: Escrow }>(path(input.id), {
+        method,
+        data: input.body,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["auction"] });
+      qc.invalidateQueries({ queryKey: queryKeys.meTransactions });
+      qc.invalidateQueries({ queryKey: ["admin", "escrow"] });
+      qc.invalidateQueries({ queryKey: queryKeys.adminStats });
+    },
+  });
+}
+
+export function useShipEscrow() {
+  return useEscrowMutation<{ note?: string }>(
+    (id) => `/api/payments/${id}/ship`
+  );
+}
+
+export function useConfirmEscrow() {
+  return useEscrowMutation((id) => `/api/payments/${id}/confirm`);
+}
+
+export function useDisputeEscrow() {
+  return useEscrowMutation<{ reason: string }>(
+    (id) => `/api/payments/${id}/dispute`
+  );
+}
+
+export function useAdminEscrow(status = "open", enabled = true) {
+  return useQuery({
+    queryKey: ["admin", "escrow", status],
+    queryFn: () =>
+      api<{ escrows: Escrow[] }>(`/api/admin/escrow?status=${status}`),
+    enabled,
+  });
+}
+
+export function useResolveEscrow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      id: string;
+      decision: "release" | "refund";
+      note?: string;
+    }) =>
+      api<{ escrow: Escrow }>(`/api/admin/escrow/${input.id}/resolve`, {
+        method: "POST",
+        data: { decision: input.decision, note: input.note },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "escrow"] });
+      qc.invalidateQueries({ queryKey: ["auction"] });
+      qc.invalidateQueries({ queryKey: queryKeys.adminStats });
+    },
   });
 }

@@ -45,6 +45,7 @@ export default function AdminOverviewPage() {
               ["Pending", stats.pending],
               ["Bids", stats.bids],
               ["Revenue", formatBdt(stats.revenue)],
+              ["In escrow", formatBdt(stats.escrowHeld || 0)],
             ].map(([label, value]) => (
               <Card key={String(label)}>
                 <CardHeader className="pb-2">

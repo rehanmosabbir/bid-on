@@ -64,7 +64,7 @@ npm run dev            # http://localhost:3000
 - Seller listings with image upload → **admin approval**
 - Live auctions with countdown + Socket.IO bid updates
 - Watchlist, dashboard (bids / listings / transactions)
-- Stripe checkout for winners (or simulated payment without Stripe keys)
+- Stripe checkout for winners, held in escrow until receipt, the post-shipment hold ends, or an admin resolves a dispute
 - Admin: KPIs, charts, approve/reject, suspend users, CSV export
 
 ## Stripe sandbox payments
@@ -103,7 +103,7 @@ npx @stripe/cli listen --forward-to localhost:4000/api/payments/webhook
 
 Copy the `whsec_...` value into `STRIPE_WEBHOOK_SECRET` and restart the API.
 
-Without `stripe listen`, Bid On still marks the auction paid when you return from Checkout (`/api/payments/session-status`).
+Without `stripe listen`, Bid On still places the payment in escrow when you return from Checkout (`/api/payments/session-status`). The auction is marked sold only after the buyer confirms receipt, the 7-day hold after shipment ends, or an admin releases the funds. A buyer can open a dispute while funds are held; an admin then releases them to the seller or refunds the buyer.
 
 ### 4) Pay with a test card
 

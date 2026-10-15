@@ -8,6 +8,7 @@ import {
   useWatchlist,
 } from "@/hooks/queries";
 import { formatBdt, mediaUrl } from "@/lib/api";
+import { escrowLabel } from "@/components/EscrowPanel";
 import { useAuth } from "@/lib/auth";
 import {
   needsVerification,
@@ -135,12 +136,16 @@ function DashboardInner() {
 
             <TabsContent value="txns" className="mt-0">
               {(txnsQ.data?.transactions || []).map((t) => (
-                <div key={t.id} className="flex justify-between p-4 text-sm">
+                <Link
+                  key={t.id}
+                  href={`/auctions/${t.auction.id}`}
+                  className="flex justify-between p-4 text-sm hover:bg-muted/50"
+                >
                   <span>
-                    {t.auction.title} · {t.status}
+                    {t.auction.title} · {escrowLabel(t.status)}
                   </span>
                   <span>{formatBdt(t.amount)}</span>
-                </div>
+                </Link>
               ))}
               {(txnsQ.data?.transactions || []).length === 0 && (
                 <p className="p-4 text-muted-foreground">No transactions yet.</p>

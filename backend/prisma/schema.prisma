@@ -23,6 +23,8 @@ enum AuctionStatus {
 
 enum TransactionStatus {
   pending
+  held
+  disputed
   completed
   failed
   refunded
@@ -184,6 +186,14 @@ model Transaction {
   stripeSessionId String?
   stripePaymentId String?
   status          TransactionStatus @default(pending)
+  heldAt          DateTime?
+  releaseDueAt    DateTime?
+  shippedAt       DateTime?
+  releasedAt      DateTime?
+  disputeReason   String?
+  disputedAt      DateTime?
+  resolvedAt      DateTime?
+  resolveNote     String?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 

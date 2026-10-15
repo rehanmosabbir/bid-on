@@ -3,6 +3,7 @@ import type { Request } from "express";
 import { param } from "../src/lib/params";
 import { signToken } from "../src/lib/auth";
 import { minimumNextBid } from "../src/lib/bidding";
+import { releaseDueAtFrom } from "../src/lib/escrow";
 import jwt from "jsonwebtoken";
 
 describe("param helper", () => {
@@ -39,6 +40,15 @@ describe("minimumNextBid", () => {
     expect(
       minimumNextBid({ currentBid: 10, startPrice: 5, minBidIncrement: null })
     ).toBe(11);
+  });
+});
+
+describe("escrow hold", () => {
+  it("sets the automatic release 7 days after shipment", () => {
+    const shipped = new Date("2026-10-15T00:00:00.000Z");
+    expect(releaseDueAtFrom(shipped).toISOString()).toBe(
+      "2026-10-22T00:00:00.000Z"
+    );
   });
 });
 

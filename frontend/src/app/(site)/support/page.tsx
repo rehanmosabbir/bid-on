@@ -14,8 +14,7 @@ export default function SupportPage() {
       </h1>
       <p className="mt-4 leading-relaxed text-muted-foreground">
         Bid On helps buyers and sellers complete transparent auctions with admin
-        listing approval, live bidding, and secure payments. For disputes after
-        a sale, contact support with your auction ID and transaction reference.
+        listing approval, live bidding, and escrow payments. After you win, payment is held until you confirm receipt. Open a dispute from the auction page if the item does not arrive.
       </p>
       <Card className="mt-8">
         <CardHeader>

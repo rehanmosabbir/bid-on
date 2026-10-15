@@ -1,22 +1,20 @@
 import { Router } from "express";
 import Stripe from "stripe";
+import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { requireAuth } from "../lib/auth";
 import { asyncHandler } from "../lib/asyncHandler";
 import { getFrontendOrigin } from "../lib/corsOrigins";
+import { getCurrency, getStripe } from "../lib/stripe";
+import {
+  confirmReceipt,
+  markShipped,
+  openDispute,
+  placeInEscrow,
+} from "../lib/escrow";
+import { param } from "../lib/params";
 
 const router = Router();
-
-/** Checkout currency for sandbox — use usd if BDT isn't enabled on the Stripe account. */
-function getCurrency() {
-  return (process.env.STRIPE_CURRENCY || "usd").toLowerCase();
-}
-
-function getStripe() {
-  const key = process.env.STRIPE_SECRET_KEY?.trim();
-  if (!key) return null;
-  return new Stripe(key);
-}
 
 router.post(
   "/create-checkout-session",
@@ -37,29 +35,33 @@ router.post(
 
     const amount = Number(auction.currentBid);
     const existing = await prisma.transaction.findFirst({
-      where: { auctionId, buyerId: req.user!.id, status: "completed" },
+      where: {
+        auctionId,
+        buyerId: req.user!.id,
+        status: { in: ["held", "disputed", "completed"] },
+      },
     });
-    if (existing) return res.status(400).json({ error: "Already paid" });
+    if (existing?.status === "completed") {
+      return res.status(400).json({ error: "Already paid" });
+    }
+    if (existing) {
+      return res.status(400).json({
+        error: "Cannot pay again while this sale is in escrow",
+      });
+    }
 
     const stripe = getStripe();
     if (!stripe) {
-      const txn = await prisma.transaction.create({
-        data: {
-          auctionId,
-          buyerId: req.user!.id,
-          sellerId: auction.sellerId,
-          amount,
-          status: "completed",
-          stripeSessionId: `dev_${Date.now()}`,
-        },
-      });
-      await prisma.auction.update({
-        where: { id: auctionId },
-        data: { status: "sold" },
+      const txn = await placeInEscrow({
+        auctionId,
+        buyerId: req.user!.id,
+        sellerId: auction.sellerId,
+        amount,
+        stripeSessionId: `dev_${Date.now()}`,
       });
       return res.json({
         mode: "dev",
-        message: "Payment simulated (no Stripe key configured)",
+        message: "Payment held in escrow (no Stripe key configured)",
         transaction: txn,
         url: `${getFrontendOrigin()}/checkout/${auctionId}?success=1`,
       });
@@ -93,30 +95,38 @@ router.post(
     }
 
     const currency = getCurrency();
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer_email: req.user!.email,
-      success_url: `${getFrontendOrigin()}/checkout/${auctionId}?success=1&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${getFrontendOrigin()}/checkout/${auctionId}?canceled=1`,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency,
-            unit_amount: Math.round(amount * 100),
-            product_data: {
-              name: auction.title,
-              description: "Won auction payment — Bid On",
+    let session;
+    try {
+      session = await stripe.checkout.sessions.create({
+        mode: "payment",
+        customer_email: req.user!.email,
+        success_url: `${getFrontendOrigin()}/checkout/${auctionId}?success=1&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${getFrontendOrigin()}/checkout/${auctionId}?canceled=1`,
+        line_items: [
+          {
+            quantity: 1,
+            price_data: {
+              currency,
+              unit_amount: Math.round(amount * 100),
+              product_data: {
+                name: auction.title,
+                description: "Won auction payment held in escrow — Bid On",
+              },
             },
           },
+        ],
+        metadata: {
+          auctionId,
+          buyerId: req.user!.id,
+          sellerId: auction.sellerId,
         },
-      ],
-      metadata: {
-        auctionId,
-        buyerId: req.user!.id,
-        sellerId: auction.sellerId,
-      },
-    });
+      });
+    } catch (err) {
+      console.error("Stripe checkout failed", err);
+      return res.status(502).json({
+        error: "Cannot start Stripe checkout. Check the API key.",
+      });
+    }
 
     await prisma.transaction.create({
       data: {
@@ -157,18 +167,17 @@ router.get(
     if (
       session.status === "complete" &&
       session.payment_status === "paid" &&
-      session.metadata?.auctionId
+      session.metadata?.auctionId &&
+      session.metadata.buyerId &&
+      session.metadata.sellerId
     ) {
-      await prisma.transaction.updateMany({
-        where: { stripeSessionId: session.id },
-        data: {
-          status: "completed",
-          stripePaymentId: String(session.payment_intent || ""),
-        },
-      });
-      await prisma.auction.update({
-        where: { id: session.metadata.auctionId },
-        data: { status: "sold" },
+      await placeInEscrow({
+        auctionId: session.metadata.auctionId,
+        buyerId: session.metadata.buyerId,
+        sellerId: session.metadata.sellerId,
+        amount: (session.amount_total || 0) / 100,
+        stripeSessionId: session.id,
+        stripePaymentId: String(session.payment_intent || ""),
       });
     }
 
@@ -189,24 +198,56 @@ export async function handleStripeWebhook(rawBody: Buffer, signature: string) {
 
   const event = stripe.webhooks.constructEvent(rawBody, signature, secret);
 
-  if (event.type === "checkout.session.completed") {
+  if (
+    event.type === "checkout.session.completed" ||
+    event.type === "checkout.session.async_payment_succeeded"
+  ) {
     const session = event.data.object as Stripe.Checkout.Session;
-    const auctionId = session.metadata?.auctionId;
-    if (auctionId) {
-      await prisma.transaction.updateMany({
-        where: { stripeSessionId: session.id },
-        data: {
-          status: "completed",
-          stripePaymentId: String(session.payment_intent || ""),
-        },
-      });
-      await prisma.auction.update({
-        where: { id: auctionId },
-        data: { status: "sold" },
+    if (
+      session.payment_status === "paid" &&
+      session.metadata?.auctionId &&
+      session.metadata.buyerId &&
+      session.metadata.sellerId
+    ) {
+      await placeInEscrow({
+        auctionId: session.metadata.auctionId,
+        buyerId: session.metadata.buyerId,
+        sellerId: session.metadata.sellerId,
+        amount: (session.amount_total || 0) / 100,
+        stripeSessionId: session.id,
+        stripePaymentId: String(session.payment_intent || ""),
       });
     }
   }
   return event;
 }
+
+router.post(
+  "/:id/ship",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const escrow = await markShipped(param(req, "id"), req.user!.id);
+    res.json({ escrow });
+  })
+);
+
+router.post(
+  "/:id/confirm",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const escrow = await confirmReceipt(param(req, "id"), req.user!.id);
+    res.json({ escrow });
+  })
+);
+
+router.post(
+  "/:id/dispute",
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const reason = z.string().parse(req.body.reason);
+    const escrow = await openDispute(param(req, "id"), req.user!.id, reason);
+    res.json({ escrow });
+  })
+);
 
 export default router;

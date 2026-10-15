@@ -17,7 +17,9 @@ export function errorHandler(
   const status =
     message.includes("Authentication") || message.includes("token")
       ? 401
-      : message.includes("suspended") || message.includes("permissions")
+      : message.includes("suspended") ||
+          message.includes("permissions") ||
+          message.startsWith("Only the")
         ? 403
         : message.includes("not found")
           ? 404

@@ -10,6 +10,7 @@ import { param } from "../lib/params";
 import { finalizeAuction, finalizeExpiredAuction } from "../jobs/auctionEnder";
 import { imageUpload } from "../lib/upload";
 import { assertReadyToTransact } from "../lib/compliance";
+import { latestEscrowForAuction } from "../lib/escrow";
 
 const router = Router();
 
@@ -93,6 +94,7 @@ router.get(
     if (!auction) return res.status(404).json({ error: "Auction not found" });
 
     let watching = false;
+    let escrow = null;
     if (req.user) {
       const w = await prisma.watchlist.findUnique({
         where: {
@@ -100,8 +102,15 @@ router.get(
         },
       });
       watching = Boolean(w);
+      const party =
+        req.user.role === "admin" ||
+        req.user.id === auction.winnerId ||
+        req.user.id === auction.sellerId;
+      if (party) {
+        escrow = await latestEscrowForAuction(auction.id);
+      }
     }
-    res.json({ auction, watching });
+    res.json({ auction, watching, escrow });
   })
 );
 

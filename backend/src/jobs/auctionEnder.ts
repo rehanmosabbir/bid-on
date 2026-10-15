@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma";
 import { emitAuctionEnded } from "../socket";
 import { createNotification } from "../services/notifications";
+import { releaseDueEscrow } from "../lib/escrow";
 
 /** Close a live auction. Expired lots close on their own; `force` lets the seller end early. */
 export async function finalizeAuction(
@@ -39,7 +40,7 @@ export async function finalizeAuction(
     await createNotification(
       updated.winnerId,
       "won",
-      `You won "${auction.title}" for ${auction.currentBid} BDT. Please complete payment.`,
+      `You won "${auction.title}" for ${auction.currentBid} BDT. Pay into escrow to claim it.`,
       { auctionId: auction.id }
     );
   }
@@ -118,6 +119,7 @@ export function startAuctionEnder(intervalMs = 30_000) {
   const tick = async () => {
     try {
       await closeExpiredAuctions();
+      await releaseDueEscrow();
     } catch (err) {
       console.error("Auction ender error:", err);
     }

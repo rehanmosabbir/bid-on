@@ -7,6 +7,7 @@ import { requirePermission } from "../lib/permissions";
 import { asyncHandler } from "../lib/asyncHandler";
 import { param } from "../lib/params";
 import { createNotification } from "../services/notifications";
+import { refundEscrow, releaseToSeller } from "../lib/escrow";
 
 const router = Router();
 
@@ -22,6 +23,7 @@ router.get(
       pending,
       bids,
       revenue,
+      escrowHeld,
       recentAuctions,
       bidsByDay,
     ] = await Promise.all([
@@ -32,6 +34,10 @@ router.get(
       prisma.bid.count(),
       prisma.transaction.aggregate({
         where: { status: "completed" },
+        _sum: { amount: true },
+      }),
+      prisma.transaction.aggregate({
+        where: { status: { in: ["held", "disputed"] } },
         _sum: { amount: true },
       }),
       prisma.auction.findMany({
@@ -56,6 +62,7 @@ router.get(
         pending,
         bids,
         revenue: Number(revenue._sum.amount || 0),
+        escrowHeld: Number(escrowHeld._sum.amount || 0),
       },
       recentAuctions,
       bidsByDay: bidsByDay.map((r) => ({
@@ -289,6 +296,56 @@ router.post(
     );
 
     res.json({ user: updated });
+  })
+);
+
+router.get(
+  "/escrow",
+  asyncHandler(async (req, res) => {
+    const raw = String(req.query.status || "open");
+    const known = ["pending", "held", "disputed", "completed", "failed", "refunded"];
+    const where =
+      raw === "open"
+        ? { status: { in: ["held" as const, "disputed" as const] } }
+        : known.includes(raw)
+          ? { status: raw as "held" }
+          : {};
+    const escrows = await prisma.transaction.findMany({
+      where,
+      include: {
+        auction: { select: { id: true, title: true, status: true } },
+        buyer: { select: { id: true, name: true, email: true } },
+        seller: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            bankStatus: true,
+            bankName: true,
+            bankAccountName: true,
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+    res.json({ escrows });
+  })
+);
+
+router.post(
+  "/escrow/:id/resolve",
+  asyncHandler(async (req, res) => {
+    const decision = z.enum(["release", "refund"]).parse(req.body.decision);
+    const note = z.string().optional().parse(req.body.note);
+    if (decision === "refund" && (!note || note.trim().length < 3)) {
+      return res.status(400).json({ error: "A resolution note is required" });
+    }
+    const escrow =
+      decision === "release"
+        ? await releaseToSeller(param(req, "id"), note || "Released by admin.")
+        : await refundEscrow(param(req, "id"), note);
+    res.json({ escrow });
   })
 );
 

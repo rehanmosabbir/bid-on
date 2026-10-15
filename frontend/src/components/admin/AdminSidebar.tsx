@@ -5,12 +5,13 @@ import { usePathname } from "next/navigation";
 import {
   ClipboardCheck,
   Gavel,
+  Landmark,
   LayoutDashboard,
   ShieldCheck,
   Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useAdminAuctions, useAdminVerifications } from "@/hooks/queries";
+import { useAdminAuctions, useAdminEscrow, useAdminVerifications } from "@/hooks/queries";
 
 const navItems: {
   href: string;
@@ -22,6 +23,7 @@ const navItems: {
   { href: "/admin/approvals", label: "Approvals", icon: ClipboardCheck },
   { href: "/admin/users", label: "Users", icon: Users },
   { href: "/admin/verifications", label: "Verification", icon: ShieldCheck },
+  { href: "/admin/escrow", label: "Escrow", icon: Landmark },
   { href: "/admin/auctions", label: "Auctions", icon: Gavel },
 ];
 
@@ -31,6 +33,8 @@ export function AdminSidebar() {
   const pendingCount = pendingQ.data?.auctions?.length ?? 0;
   const verifyQ = useAdminVerifications({ queue: "pending" }, true);
   const verifyCount = verifyQ.data?.users?.length ?? 0;
+  const escrowQ = useAdminEscrow("disputed", true);
+  const disputeCount = escrowQ.data?.escrows?.length ?? 0;
 
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-muted/40">
@@ -51,7 +55,9 @@ export function AdminSidebar() {
               ? pendingCount
               : item.href === "/admin/verifications"
                 ? verifyCount
-                : 0;
+                : item.href === "/admin/escrow"
+                  ? disputeCount
+                  : 0;
           const showBadge = badgeCount > 0;
 
           return (

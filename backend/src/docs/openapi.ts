@@ -522,7 +522,7 @@ export const openApiDocument = {
     "/api/payments/create-checkout-session": {
       post: {
         tags: ["Payments"],
-        summary: "Start Stripe checkout (or simulate)",
+        summary: "Pay the winning bid into escrow",
         security: [{ bearerAuth: [] }],
         requestBody: {
           required: true,
@@ -537,6 +537,45 @@ export const openApiDocument = {
           },
         },
         responses: { "200": { description: "Checkout URL / session" } },
+      },
+    },
+    "/api/payments/{id}/ship": {
+      post: {
+        tags: ["Payments"],
+        summary: "Seller marks the escrowed lot as shipped",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Escrow" } },
+      },
+    },
+    "/api/payments/{id}/confirm": {
+      post: {
+        tags: ["Payments"],
+        summary: "Buyer confirms receipt and releases escrow",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { "200": { description: "Escrow" } },
+      },
+    },
+    "/api/payments/{id}/dispute": {
+      post: {
+        tags: ["Payments"],
+        summary: "Buyer opens an escrow dispute",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["reason"],
+                properties: { reason: { type: "string" } },
+              },
+            },
+          },
+        },
+        responses: { "200": { description: "Escrow" } },
       },
     },
     "/api/payments/session-status": {
